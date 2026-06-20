@@ -38,6 +38,7 @@ import com.utopia.racechronobridge.ssm2.ChannelMode
 import com.utopia.racechronobridge.ssm2.CustomTelemetryChannel
 import com.utopia.racechronobridge.ssm2.CustomTelemetryChannelParser
 import com.utopia.racechronobridge.ssm2.FakeSubaruTelemetrySource
+import com.utopia.racechronobridge.ssm2.StandardSsm2Preset
 import com.utopia.racechronobridge.ssm2.Ssm2Reader
 import com.utopia.racechronobridge.ssm2.SubaruTelemetry
 import com.utopia.racechronobridge.ssm2.TelemetryChannel
@@ -299,6 +300,9 @@ class MainActivity : Activity() {
                     LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
                 )
             },
+        )
+        root.addView(
+            compactButton("Load standard tuning preset", active = false) { loadStandardTuningPreset() },
         )
         customChannelsLayout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -738,6 +742,12 @@ class MainActivity : Activity() {
             appendLog("Custom channel file picker failed: ${error.message}")
             showUserMessage("Could not open file picker")
         }
+    }
+
+    private fun loadStandardTuningPreset() {
+        customChannelInput.setText(StandardSsm2Preset.tuningPresetCsv)
+        customChannelInput.setSelection(customChannelInput.text.length)
+        importCustomChannelsFromInput()
     }
 
     private fun clearCustomChannels() {

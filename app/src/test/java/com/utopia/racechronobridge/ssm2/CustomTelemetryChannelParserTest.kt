@@ -69,4 +69,31 @@ class CustomTelemetryChannelParserTest {
         assertEquals("Oil pressure", result.channels.single().label)
         assertTrue(result.errors.single().contains("Unsupported RC3 slot"))
     }
+
+    @Test
+    fun parsesStandardTuningPreset() {
+        val result = CustomTelemetryChannelParser.parse(StandardSsm2Preset.tuningPresetCsv)
+
+        assertEquals(emptyList(), result.errors)
+        assertEquals(6, result.channels.size)
+
+        val byField = result.channels.associateBy { it.rc3Field }
+        assertEquals("A/F Correction #1", byField.getValue("Analog 10").label)
+        assertEquals(0x000009, byField.getValue("Analog 10").address)
+        assertEquals(0.78125, byField.getValue("Analog 10").scale)
+        assertEquals(-100.0, byField.getValue("Analog 10").offset)
+        assertEquals(ChannelMode.SLOW, byField.getValue("Analog 10").mode)
+
+        assertEquals("IAM", byField.getValue("Analog 12").label)
+        assertEquals(0x0000F9, byField.getValue("Analog 12").address)
+        assertEquals(1.0, byField.getValue("Analog 12").convert(16))
+
+        assertEquals("Fine knock learn", byField.getValue("Analog 13").label)
+        assertEquals(0x000199, byField.getValue("Analog 13").address)
+        assertEquals(-31.75, byField.getValue("Analog 13").convert(1))
+
+        assertEquals("Engine Load", byField.getValue("Analog 15").label)
+        assertEquals(0x000007, byField.getValue("Analog 15").address)
+        assertEquals(100.0, byField.getValue("Analog 15").convert(255), 0.000001)
+    }
 }

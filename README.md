@@ -17,6 +17,7 @@ Important: enable the RaceChrono DIY `RC2/RC3` API only. Do not enable `NMEA 018
 - Bluetooth connection success automatically starts ELM327 initialization and SSM2 polling.
 - Per-channel `Off` / `Fast` / `Slow` settings are available in the app and are persisted locally.
 - Custom SSM2 channels can be pasted or opened from a CSV/text file. A custom channel replaces one existing RC3 field such as `Analog 15`.
+- A built-in standard tuning preset can load common SSM2 parameters such as A/F Correction, A/F Learning, IAM, Fine Learning Knock Correction, A/F Sensor, and Engine Load into custom RC3 analog slots.
 - ELM327 initialization for SSM2 over CAN:
   - `ATZ`
   - `ATE0`
@@ -105,6 +106,19 @@ The same row can also be pasted as key/value text:
 ```text
 slot=Analog 15,label=Oil temp,unit=C,address=0x000108,bytes=1,scale=1,offset=-40,mode=Slow,signed=false
 ```
+
+Tap `Load standard tuning preset` to replace `Analog 10` through `Analog 15` with these SSM2 channels:
+
+| RC3 field | Label | SSM2 address | Formula |
+|---|---|---:|---|
+| `a10` | A/F Correction #1 % | `0x000009` | `raw * 0.78125 - 100` |
+| `a11` | A/F Learning #1 % | `0x00000A` | `raw * 0.78125 - 100` |
+| `a12` | IAM multiplier | `0x0000F9` | `raw * 0.0625` |
+| `a13` | Fine knock learn deg | `0x000199` | `raw * 0.25 - 32` |
+| `a14` | A/F Sensor #1 AFR | `0x000046` | `raw * 0.11484375` |
+| `a15` | Engine Load % | `0x000007` | `raw * 0.3921568627` |
+
+These standard preset formulas are based on public RomRaider Subaru logger definitions: https://github.com/RomRaider/SubaruDefs/blob/Stable/RomRaider/logger/standard/logger.xml
 
 RaceChrono DIY RC3 format and checksum are based on the official RaceChrono DIY device documentation: https://racechrono.com/article/2572
 RaceChrono's forum notes that direct analog-channel renaming was not available for the simple RC3-style data logger channels: https://racechrono.com/forum/d/1689-1689
