@@ -1,6 +1,8 @@
 package com.utopia.racechronobridge.racechrono
 
+import com.utopia.racechronobridge.ssm2.ChannelMode
 import com.utopia.racechronobridge.ssm2.SubaruTelemetry
+import com.utopia.racechronobridge.ssm2.TelemetryChannel
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -44,5 +46,38 @@ class Rc3SentenceTest {
                 "31.000,13.800,120.000,22.500,-1.000,2.000,5.500,70.000,60.000*09\r\n",
             sentence,
         )
+    }
+
+    @Test
+    fun formatLeavesOffChannelsBlank() {
+        val modes = TelemetryChannel.defaultModes().apply {
+            this[TelemetryChannel.GEAR] = ChannelMode.OFF
+            this[TelemetryChannel.BOOST] = ChannelMode.OFF
+        }
+
+        val sentence = rc3Sentence.format(
+            count = 1,
+            telemetry = SubaruTelemetry.EMPTY.copy(
+                rpm = 2500.0,
+                boostKpa = 12.0,
+                coolantC = 90.0,
+                gear = 4,
+            ),
+            channelModes = modes,
+        )
+
+        val fields = sentence.substringAfter("${'$'}").substringBefore("*").split(",")
+        assertEquals("2500.000", fields[9])
+        assertEquals("", fields[10])
+        assertEquals("", fields[11])
+        assertEquals("90.000", fields[12])
+    }
+
+    @Test
+    fun telemetryChannelsExposeRaceChronoFieldMapping() {
+        assertEquals("Digital 1/RPM", TelemetryChannel.RPM.rc3Field)
+        assertEquals("Digital 2", TelemetryChannel.GEAR.rc3Field)
+        assertEquals("Analog 1", TelemetryChannel.BOOST.rc3Field)
+        assertEquals("Analog 15", TelemetryChannel.ALTERNATOR_DUTY.rc3Field)
     }
 }

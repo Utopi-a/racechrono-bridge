@@ -13,7 +13,9 @@ Important: enable the RaceChrono DIY `RC2/RC3` API only. Do not enable `NMEA 018
 - Paired Bluetooth adapters are listed before scan results and are connected through Classic Bluetooth SPP first.
 - BLE serial characteristic discovery by write/notify capability instead of hard-coded UUIDs.
 - TCP server starts automatically when the app opens.
+- The last successful Bluetooth adapter is saved and auto-selected on the next launch.
 - Bluetooth connection success automatically starts ELM327 initialization and SSM2 polling.
+- Per-channel `Off` / `Fast` / `Slow` settings are available in the app and are persisted locally.
 - ELM327 initialization for SSM2 over CAN:
   - `ATZ`
   - `ATE0`
@@ -64,6 +66,8 @@ Internal GPS receiver: ON
 
 RC3 channel mapping:
 
+RaceChrono's RC3 data logger field names are fixed, so the app cannot rename `Analog 1`, `Analog 2`, etc. in RaceChrono's live view. Use this mapping to interpret those fixed labels.
+
 | RC3 field | Value |
 |---|---|
 | `rpm/d1` | RPM |
@@ -85,6 +89,7 @@ RC3 channel mapping:
 | `a15` | Alternator duty % |
 
 RaceChrono DIY RC3 format and checksum are based on the official RaceChrono DIY device documentation: https://racechrono.com/article/2572
+RaceChrono's forum notes that direct analog-channel renaming was not available for the simple RC3-style data logger channels: https://racechrono.com/forum/d/1689-1689
 
 ## Build
 
@@ -111,6 +116,7 @@ app/build/outputs/apk/debug/app-debug.apk
 ## Known Limits
 
 - Real iCar Pro 2S UUIDs have not been captured yet, so BLE uses discovery fallback by characteristic properties.
+- RC3 does not carry custom channel metadata. A future BLE CAN-Bus style bridge could make RaceChrono-side custom channel naming possible, but this TCP RC3 bridge intentionally keeps the simple local stream.
 - Real car verification is still required for `E8 xx` response timing and polling rate.
 - RPM high/low are read as separate SSM2 requests, so fast RPM changes can produce a small mismatch.
 - Keep the app foreground during recording; Android background BLE/network behavior is not handled yet.

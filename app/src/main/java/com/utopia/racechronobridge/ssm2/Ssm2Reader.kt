@@ -7,27 +7,19 @@ class Ssm2Reader(
 ) {
     private var nextSlowIndex = 0
 
-    fun readTelemetry(previous: SubaruTelemetry): SubaruTelemetry {
-        val rpmHigh = elmSession.readByte(Ssm2Parameter.RPM_HIGH)
-        val rpmLow = elmSession.readByte(Ssm2Parameter.RPM_LOW)
-        val boost = elmSession.readByte(Ssm2Parameter.BOOST)
-        val throttle = elmSession.readByte(Ssm2Parameter.THROTTLE)
-        val accelerator = elmSession.readByte(Ssm2Parameter.ACCELERATOR)
-        val speed = elmSession.readByte(Ssm2Parameter.VEHICLE_SPEED)
+    fun readTelemetry(
+        previous: SubaruTelemetry,
+        channelModes: Map<TelemetryChannel, ChannelMode> = TelemetryChannel.defaultModes(),
+    ): SubaruTelemetry {
+        var telemetry = previous.copy(timestampMillis = System.currentTimeMillis())
 
-        var telemetry = previous.copy(
-            rpm = ((rpmHigh shl 8) + rpmLow) / 4.0,
-            boostKpa = boost.toRelativePressureKpa(),
-            throttlePercent = throttle.toPercent(),
-            acceleratorPercent = accelerator.toPercent(),
-            vehicleSpeedKph = speed.toDouble(),
-            timestampMillis = System.currentTimeMillis(),
-        )
+        FAST_CHANNEL_ORDER
+            .filter { channel -> channelModes.modeFor(channel) == ChannelMode.FAST }
+            .forEach { channel -> telemetry = readChannel(channel, telemetry) }
 
         repeat(SLOW_READS_PER_CYCLE) {
-            val slowChannel = SLOW_CHANNELS[nextSlowIndex]
-            telemetry = readSlowChannel(slowChannel, telemetry)
-            nextSlowIndex = (nextSlowIndex + 1) % SLOW_CHANNELS.size
+            val slowChannel = nextSlowChannel(channelModes) ?: return@repeat
+            telemetry = readChannel(slowChannel, telemetry)
         }
 
         return telemetry
@@ -35,46 +27,64 @@ class Ssm2Reader(
 
     fun readMvpTelemetry(): SubaruTelemetry = readTelemetry(SubaruTelemetry.EMPTY)
 
-    private fun readSlowChannel(channel: SlowChannel, telemetry: SubaruTelemetry): SubaruTelemetry {
+    private fun readChannel(channel: TelemetryChannel, telemetry: SubaruTelemetry): SubaruTelemetry {
         return when (channel) {
-            SlowChannel.COOLANT -> telemetry.copy(
+            TelemetryChannel.RPM -> telemetry.copy(
+                rpm = readU16(
+                    high = Ssm2Parameter.RPM_HIGH,
+                    low = Ssm2Parameter.RPM_LOW,
+                ) / 4.0,
+            )
+            TelemetryChannel.BOOST -> telemetry.copy(
+                boostKpa = elmSession.readByte(Ssm2Parameter.BOOST).toRelativePressureKpa(),
+            )
+            TelemetryChannel.COOLANT -> telemetry.copy(
                 coolantC = elmSession.readByte(Ssm2Parameter.COOLANT).toTemperatureC(),
             )
-            SlowChannel.PRIMARY_WGDC -> telemetry.copy(
+            TelemetryChannel.THROTTLE -> telemetry.copy(
+                throttlePercent = elmSession.readByte(Ssm2Parameter.THROTTLE).toPercent(),
+            )
+            TelemetryChannel.ACCELERATOR -> telemetry.copy(
+                acceleratorPercent = elmSession.readByte(Ssm2Parameter.ACCELERATOR).toPercent(),
+            )
+            TelemetryChannel.PRIMARY_WGDC -> telemetry.copy(
                 primaryWastegateDutyPercent = elmSession.readByte(Ssm2Parameter.PRIMARY_WGDC).toPercent(),
             )
-            SlowChannel.GEAR -> telemetry.copy(
+            TelemetryChannel.VEHICLE_SPEED -> telemetry.copy(
+                vehicleSpeedKph = elmSession.readByte(Ssm2Parameter.VEHICLE_SPEED).toDouble(),
+            )
+            TelemetryChannel.GEAR -> telemetry.copy(
                 gear = elmSession.readByte(Ssm2Parameter.GEAR_POSITION) + 1,
             )
-            SlowChannel.INTAKE_AIR_TEMP -> telemetry.copy(
+            TelemetryChannel.INTAKE_AIR_TEMP -> telemetry.copy(
                 intakeAirTempC = elmSession.readByte(Ssm2Parameter.INTAKE_AIR_TEMP).toTemperatureC(),
             )
-            SlowChannel.BATTERY -> telemetry.copy(
+            TelemetryChannel.BATTERY_VOLTAGE -> telemetry.copy(
                 batteryVoltage = elmSession.readByte(Ssm2Parameter.BATTERY_VOLTAGE) * 8.0 / 100.0,
             )
-            SlowChannel.MASS_AIRFLOW -> telemetry.copy(
+            TelemetryChannel.MASS_AIRFLOW -> telemetry.copy(
                 massAirflowGps = readU16(
                     high = Ssm2Parameter.MASS_AIRFLOW_HIGH,
                     low = Ssm2Parameter.MASS_AIRFLOW_LOW,
                 ) / 100.0,
             )
-            SlowChannel.IGNITION_TIMING -> telemetry.copy(
+            TelemetryChannel.IGNITION_TIMING -> telemetry.copy(
                 ignitionTimingDeg = elmSession.readByte(Ssm2Parameter.IGNITION_TIMING).toSignedHalfDegree(),
             )
-            SlowChannel.KNOCK_CORRECTION -> telemetry.copy(
+            TelemetryChannel.KNOCK_CORRECTION -> telemetry.copy(
                 knockCorrectionDeg = elmSession.readByte(Ssm2Parameter.KNOCK_CORRECTION).toSignedHalfDegree(),
             )
-            SlowChannel.LEARNED_IGNITION -> telemetry.copy(
+            TelemetryChannel.LEARNED_IGNITION -> telemetry.copy(
                 learnedIgnitionTimingDeg = elmSession.readByte(Ssm2Parameter.LEARNED_IGNITION_TIMING)
                     .toSignedHalfDegree(),
             )
-            SlowChannel.INJECTOR_PULSE_WIDTH -> telemetry.copy(
+            TelemetryChannel.INJECTOR_PULSE_WIDTH -> telemetry.copy(
                 injectorPulseWidthMs = elmSession.readByte(Ssm2Parameter.INJECTOR_PULSE_WIDTH) * 256.0 / 1000.0,
             )
-            SlowChannel.FUEL_PUMP_DUTY -> telemetry.copy(
+            TelemetryChannel.FUEL_PUMP_DUTY -> telemetry.copy(
                 fuelPumpDutyPercent = elmSession.readByte(Ssm2Parameter.FUEL_PUMP_DUTY).toPercent(),
             )
-            SlowChannel.ALTERNATOR_DUTY -> telemetry.copy(
+            TelemetryChannel.ALTERNATOR_DUTY -> telemetry.copy(
                 alternatorDutyPercent = elmSession.readByte(Ssm2Parameter.ALTERNATOR_DUTY).toDouble(),
             )
         }
@@ -92,23 +102,21 @@ class Ssm2Reader(
 
     private fun Int.toSignedHalfDegree(): Double = (this - 128.0) / 2.0
 
-    private enum class SlowChannel {
-        COOLANT,
-        PRIMARY_WGDC,
-        GEAR,
-        INTAKE_AIR_TEMP,
-        BATTERY,
-        MASS_AIRFLOW,
-        IGNITION_TIMING,
-        KNOCK_CORRECTION,
-        LEARNED_IGNITION,
-        INJECTOR_PULSE_WIDTH,
-        FUEL_PUMP_DUTY,
-        ALTERNATOR_DUTY,
+    private fun nextSlowChannel(channelModes: Map<TelemetryChannel, ChannelMode>): TelemetryChannel? {
+        val slowChannels = SLOW_CHANNEL_ORDER.filter { channel ->
+            channelModes.modeFor(channel) == ChannelMode.SLOW
+        }
+        if (slowChannels.isEmpty()) {
+            return null
+        }
+        val channel = slowChannels[nextSlowIndex % slowChannels.size]
+        nextSlowIndex = (nextSlowIndex + 1) % slowChannels.size
+        return channel
     }
 
     companion object {
         private const val SLOW_READS_PER_CYCLE = 2
-        private val SLOW_CHANNELS = SlowChannel.entries.toList()
+        private val FAST_CHANNEL_ORDER = TelemetryChannel.entries.toList()
+        private val SLOW_CHANNEL_ORDER = TelemetryChannel.entries.toList()
     }
 }
