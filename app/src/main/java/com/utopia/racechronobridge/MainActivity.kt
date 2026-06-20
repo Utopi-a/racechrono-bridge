@@ -49,6 +49,7 @@ class MainActivity : Activity() {
     private var ssm2Reader: Ssm2Reader? = null
     private var fakePollingTask: ScheduledFuture<*>? = null
     private var realPollingTask: ScheduledFuture<*>? = null
+    private var lastTelemetry: SubaruTelemetry = SubaruTelemetry.EMPTY
     private var rc3Count = 0
 
     private lateinit var tcpServer: RaceChronoTcpServer
@@ -80,6 +81,7 @@ class MainActivity : Activity() {
         renderTelemetry(SubaruTelemetry.EMPTY)
         refreshLog()
         appendLog("App ready. In RaceChrono, enable RC2/RC3 only. Do not enable NMEA 0183.")
+        tcpServer.start()
     }
 
     override fun onDestroy() {
@@ -281,6 +283,7 @@ class MainActivity : Activity() {
                         mainHandler.post {
                             bleStatusView.text = "Bluetooth: connected to ${scanDevice.name}"
                             elmStatusView.text = "ELM327: not initialized"
+                            initializeElm327(startPollingOnSuccess = true)
                         }
                     } else {
                         mainHandler.post {
@@ -297,7 +300,7 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun initializeElm327() {
+    private fun initializeElm327(startPollingOnSuccess: Boolean = false) {
         val client = elmTransport
         if (client == null) {
             appendLog("Select and connect a Bluetooth device before ELM327 initialization.")
@@ -317,6 +320,9 @@ class MainActivity : Activity() {
                 ssm2Reader = Ssm2Reader(session)
                 mainHandler.post {
                     elmStatusView.text = "ELM327: initialized for SSM2"
+                    if (startPollingOnSuccess) {
+                        startRealTelemetry()
+                    }
                 }
             } catch (error: Exception) {
                 appendLog("ELM327 initialization failed: ${error.message}")
@@ -392,7 +398,7 @@ class MainActivity : Activity() {
         realPollingTask = pollExecutor.scheduleWithFixedDelay(
             {
                 try {
-                    publishTelemetry(reader.readMvpTelemetry())
+                    publishTelemetry(reader.readTelemetry(lastTelemetry))
                 } catch (error: Exception) {
                     appendLog("SSM2 polling failed: ${error.message}")
                 }
@@ -404,6 +410,7 @@ class MainActivity : Activity() {
     }
 
     private fun publishTelemetry(telemetry: SubaruTelemetry) {
+        lastTelemetry = telemetry
         val sentence = rc3Sentence.format(count = rc3Count, telemetry = telemetry)
         rc3Count = (rc3Count + 1) and 0xFFFF
         tcpServer.send(sentence)
@@ -438,10 +445,29 @@ class MainActivity : Activity() {
     private fun renderTelemetry(telemetry: SubaruTelemetry) {
         telemetryView.text = String.format(
             Locale.US,
-            "RPM      %7.0f\nBoost    %7.1f kPa\nCoolant  %7.1f C",
+            "RPM      %7.0f\nBoost    %7.1f kPa\nCoolant  %7.1f C\n" +
+                "Throttle %6.1f %%\nAccel    %6.1f %%\nWGDC     %6.1f %%\n" +
+                "Speed    %6.1f km/h\nGear     %6d\nIAT      %6.1f C\n" +
+                "Battery  %6.2f V\nMAF      %6.1f g/s\nIgn      %6.1f deg\n" +
+                "Knock    %6.1f deg\nLearnIgn %6.1f deg\nInj PW   %6.2f ms\n" +
+                "FuelPump %6.1f %%\nAltDuty  %6.1f %%",
             telemetry.rpm,
             telemetry.boostKpa,
             telemetry.coolantC,
+            telemetry.throttlePercent,
+            telemetry.acceleratorPercent,
+            telemetry.primaryWastegateDutyPercent,
+            telemetry.vehicleSpeedKph,
+            telemetry.gear,
+            telemetry.intakeAirTempC,
+            telemetry.batteryVoltage,
+            telemetry.massAirflowGps,
+            telemetry.ignitionTimingDeg,
+            telemetry.knockCorrectionDeg,
+            telemetry.learnedIgnitionTimingDeg,
+            telemetry.injectorPulseWidthMs,
+            telemetry.fuelPumpDutyPercent,
+            telemetry.alternatorDutyPercent,
         )
     }
 
