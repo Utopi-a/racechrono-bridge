@@ -13,6 +13,7 @@ Important: enable the RaceChrono DIY `RC2/RC3` API only. Do not enable `NMEA 018
 - Paired Bluetooth adapters are listed before scan results and are connected through Classic Bluetooth SPP first.
 - BLE serial characteristic discovery by write/notify capability instead of hard-coded UUIDs.
 - TCP server starts automatically when the app opens.
+- A `connectedDevice` foreground service keeps the bridge process alive while RaceChrono is foregrounded.
 - The last successful Bluetooth adapter is saved and auto-selected on the next launch.
 - Bluetooth connection success automatically starts ELM327 initialization and SSM2 polling.
 - Per-channel `Off` / `Fast` / `Slow` settings are available in the app and are persisted locally.
@@ -51,8 +52,9 @@ Important: enable the RaceChrono DIY `RC2/RC3` API only. Do not enable `NMEA 018
 2. Tap `Scan BLE devices`.
 3. Select the iCar Pro 2S device from the `BLE devices` list. A `paired` device uses Classic Bluetooth SPP first, then falls back to BLE GATT if SPP fails.
 4. ELM327 initialization and SSM2 polling start automatically after Bluetooth connection succeeds.
-5. Connect RaceChrono DIY TCP/IP to `127.0.0.1:9876`.
-6. Enable `RC2/RC3`; keep `NMEA 0183` off.
+5. Leave the `RaceChrono Bridge running` notification active, then switch to RaceChrono.
+6. Connect RaceChrono DIY TCP/IP to `127.0.0.1:9876`.
+7. Enable `RC2/RC3`; keep `NMEA 0183` off.
 
 ## RaceChrono Setup
 
@@ -179,8 +181,11 @@ When the app opens, check the debug log for `Previous Android exit` and `Last un
 | `REASON_USER_REQUESTED` or `REASON_USER_STOPPED` | The app was stopped from recents/settings or by a device power-management action. |
 | `Previous lifecycle before process exit: onStop` | The app had moved to the background before the process exited. |
 
-The app currently keeps the screen awake while the activity is visible, but it is still an activity-based MVP. For reliable recording while the screen is off or another app is foregrounded, the polling/TCP bridge should move to a notification-backed Android foreground service. Android documents background execution limits and BLE background communication here:
+The app starts a `connectedDevice` foreground service before Bluetooth connection work so Android keeps the process active while RaceChrono is foregrounded. Android 13 and newer may hide the notification if notification permission is denied, but the foreground-service task remains visible in the system task manager.
 
+Android documents foreground service requirements, background execution limits, and BLE background communication here:
+
+- https://developer.android.com/develop/background-work/services/fgs/service-types
 - https://developer.android.com/about/versions/oreo/background
 - https://developer.android.com/develop/connectivity/bluetooth/ble/background
 - https://developer.android.com/topic/performance/vitals/anr
@@ -192,4 +197,4 @@ The app currently keeps the screen awake while the activity is visible, but it i
 - RC3 has a fixed number of output fields. Custom channels replace an existing `Digital` or `Analog` field; they do not add unlimited new RaceChrono channels.
 - Real car verification is still required for `E8 xx` response timing and polling rate.
 - RPM high/low are read as separate SSM2 requests, so fast RPM changes can produce a small mismatch.
-- Keep the app foreground during recording; Android background BLE/network behavior is not handled by a foreground service yet.
+- The foreground service currently keeps the process alive, while the bridge runtime is still owned by the activity instance. The next reliability step is moving Bluetooth, polling, and TCP ownership fully into the service.

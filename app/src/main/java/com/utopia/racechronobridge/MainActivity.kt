@@ -30,6 +30,7 @@ import com.utopia.racechronobridge.ble.BleDeviceScanner
 import com.utopia.racechronobridge.ble.BleElmClient
 import com.utopia.racechronobridge.ble.BleScanDevice
 import com.utopia.racechronobridge.bluetooth.ClassicBluetoothElmClient
+import com.utopia.racechronobridge.background.BridgeForegroundService
 import com.utopia.racechronobridge.diagnostics.AppExitDiagnostics
 import com.utopia.racechronobridge.elm.Elm327Session
 import com.utopia.racechronobridge.elm.Elm327Transport
@@ -139,6 +140,9 @@ class MainActivity : Activity() {
         elmTransport?.close()
         tcpServer.stop()
         pollExecutor.shutdownNow()
+        if (isFinishing) {
+            BridgeForegroundService.stop(this)
+        }
         super.onDestroy()
     }
 
@@ -824,6 +828,7 @@ class MainActivity : Activity() {
 
     private fun connectBleDevice(scanDevice: BleScanDevice) {
         ensureBlePermissions {
+            startBridgeForegroundService()
             bleScanner?.stop()
             bleStatusView.text = "connecting\n${scanDevice.name}"
             appendLog("Connecting Bluetooth device: ${scanDevice.name} ${scanDevice.address}")
@@ -928,6 +933,7 @@ class MainActivity : Activity() {
             return
         }
 
+        startBridgeForegroundServiceIfBluetoothPermitted()
         stopRealTelemetry()
         appendLog("Starting fake telemetry at 5 Hz.")
         pollingStatusView.text = "fake telemetry\n5 Hz"
@@ -953,6 +959,7 @@ class MainActivity : Activity() {
             return
         }
 
+        startBridgeForegroundServiceIfBluetoothPermitted()
         stopFakeTelemetry()
         appendLog("Starting SSM2 polling.")
         pollingStatusView.text = "SSM2 over CAN"
@@ -1007,6 +1014,25 @@ class MainActivity : Activity() {
             pollingStatusView.text = "stopped"
         }
         appendLog("SSM2 polling stopped.")
+    }
+
+    private fun startBridgeForegroundServiceIfBluetoothPermitted() {
+        if (hasBlePermissions()) {
+            startBridgeForegroundService()
+        } else {
+            appendLog("Foreground keep-alive service is waiting for Bluetooth permission.")
+        }
+    }
+
+    private fun startBridgeForegroundService() {
+        runCatching {
+            BridgeForegroundService.start(this)
+        }.onSuccess {
+            appendLog("Foreground keep-alive service requested.")
+        }.onFailure { error ->
+            appendLog("Foreground keep-alive service failed: ${error.message}")
+            showUserMessage("バックグラウンド維持サービスの起動に失敗しました")
+        }
     }
 
     private fun renderTelemetry(telemetry: SubaruTelemetry) {
@@ -1068,6 +1094,12 @@ class MainActivity : Activity() {
         pendingBlePermissionAction = action
         requestPermissions(missingPermissions.toTypedArray(), BLE_PERMISSION_REQUEST)
         appendLog("Requesting BLE permissions: ${missingPermissions.joinToString()}")
+    }
+
+    private fun hasBlePermissions(): Boolean {
+        return blePermissions().all { permission ->
+            checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
+        }
     }
 
     private fun blePermissions(): List<String> {
