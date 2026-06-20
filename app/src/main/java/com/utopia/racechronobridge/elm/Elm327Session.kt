@@ -1,10 +1,9 @@
 package com.utopia.racechronobridge.elm
 
-import com.utopia.racechronobridge.ble.BleElmClient
 import com.utopia.racechronobridge.ssm2.Ssm2Parameter
 
 class Elm327Session(
-    private val client: BleElmClient,
+    private val client: Elm327Transport,
     private val onRawResponse: (String) -> Unit,
     private val onLog: (String) -> Unit,
 ) {

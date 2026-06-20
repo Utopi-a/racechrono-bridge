@@ -9,6 +9,7 @@ import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothProfile
 import android.content.Context
 import android.os.Build
+import com.utopia.racechronobridge.elm.Elm327Transport
 import java.nio.charset.StandardCharsets
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
@@ -18,7 +19,7 @@ class BleElmClient(
     private val context: Context,
     private val device: BluetoothDevice,
     private val onLog: (String) -> Unit,
-) {
+) : Elm327Transport {
     private val responseLock = Object()
     private val responseBuffer = StringBuilder()
 
@@ -105,7 +106,7 @@ class BleElmClient(
     }
 
     @SuppressLint("MissingPermission")
-    fun sendCommand(command: String, timeoutMillis: Long = 2_000): String {
+    override fun sendCommand(command: String, timeoutMillis: Long): String {
         val gatt = bluetoothGatt ?: error("BLE is not connected.")
         val characteristic = writeCharacteristic ?: error("BLE write characteristic is not ready.")
 
@@ -142,7 +143,7 @@ class BleElmClient(
     }
 
     @SuppressLint("MissingPermission")
-    fun close() {
+    override fun close() {
         connected = false
         try {
             bluetoothGatt?.close()

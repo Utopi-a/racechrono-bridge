@@ -10,6 +10,7 @@ Important: enable the RaceChrono DIY `RC2/RC3` API only. Do not enable `NMEA 018
 
 - Offline fake telemetry mode for RaceChrono connection testing without the car.
 - BLE scan/connect for likely ELM327 adapters such as `Android-Vlink`, `V-LINK`, `vLink`, `Vgate`, and `iCar`.
+- Paired Bluetooth adapters are listed before scan results and are connected through Classic Bluetooth SPP first.
 - BLE serial characteristic discovery by write/notify capability instead of hard-coded UUIDs.
 - ELM327 initialization for SSM2 over CAN:
   - `ATZ`
@@ -42,7 +43,7 @@ Important: enable the RaceChrono DIY `RC2/RC3` API only. Do not enable `NMEA 018
 1. Turn RaceChrono OBD-II reader off. The iCar Pro 2S should be connected only by this bridge app.
 2. Tap `Start TCP server`.
 3. Tap `Scan BLE devices`.
-4. Select the iCar Pro 2S device from the `BLE devices` list.
+4. Select the iCar Pro 2S device from the `BLE devices` list. A `paired` device uses Classic Bluetooth SPP first, then falls back to BLE GATT if SPP fails.
 5. Tap `Initialize ELM327`.
 6. Tap `Start SSM2 polling`.
 7. Connect RaceChrono DIY TCP/IP to `127.0.0.1:9876`.

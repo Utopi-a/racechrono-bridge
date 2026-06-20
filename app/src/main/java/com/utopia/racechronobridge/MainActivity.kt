@@ -19,7 +19,9 @@ import android.widget.TextView
 import com.utopia.racechronobridge.ble.BleDeviceScanner
 import com.utopia.racechronobridge.ble.BleElmClient
 import com.utopia.racechronobridge.ble.BleScanDevice
+import com.utopia.racechronobridge.bluetooth.ClassicBluetoothElmClient
 import com.utopia.racechronobridge.elm.Elm327Session
+import com.utopia.racechronobridge.elm.Elm327Transport
 import com.utopia.racechronobridge.logging.DebugLog
 import com.utopia.racechronobridge.racechrono.RaceChronoTcpServer
 import com.utopia.racechronobridge.racechrono.Rc3Sentence
@@ -42,7 +44,7 @@ class MainActivity : Activity() {
 
     private var pendingBlePermissionAction: (() -> Unit)? = null
     private var bleScanner: BleDeviceScanner? = null
-    private var bleClient: BleElmClient? = null
+    private var elmTransport: Elm327Transport? = null
     private var elmSession: Elm327Session? = null
     private var ssm2Reader: Ssm2Reader? = null
     private var fakePollingTask: ScheduledFuture<*>? = null
@@ -83,7 +85,7 @@ class MainActivity : Activity() {
     override fun onDestroy() {
         stopTelemetry()
         bleScanner?.stop()
-        bleClient?.close()
+        elmTransport?.close()
         tcpServer.stop()
         pollExecutor.shutdownNow()
         super.onDestroy()
@@ -266,34 +268,29 @@ class MainActivity : Activity() {
     private fun connectBleDevice(scanDevice: BleScanDevice) {
         ensureBlePermissions {
             bleScanner?.stop()
-            bleStatusView.text = "BLE: connecting to ${scanDevice.name}"
-            appendLog("Connecting BLE device: ${scanDevice.name} ${scanDevice.address}")
+            bleStatusView.text = "Bluetooth: connecting to ${scanDevice.name}"
+            appendLog("Connecting Bluetooth device: ${scanDevice.name} ${scanDevice.address}")
             pollExecutor.execute {
                 try {
-                    bleClient?.close()
+                    elmTransport?.close()
                     elmSession = null
                     ssm2Reader = null
-                    val client = BleElmClient(
-                        context = this,
-                        device = scanDevice.device,
-                        onLog = ::appendLog,
-                    )
-                    if (client.connect()) {
-                        bleClient = client
+                    val transport = connectElmTransport(scanDevice)
+                    if (transport != null) {
+                        elmTransport = transport
                         mainHandler.post {
-                            bleStatusView.text = "BLE: connected to ${scanDevice.name}"
+                            bleStatusView.text = "Bluetooth: connected to ${scanDevice.name}"
                             elmStatusView.text = "ELM327: not initialized"
                         }
                     } else {
-                        client.close()
                         mainHandler.post {
-                            bleStatusView.text = "BLE: connection failed"
+                            bleStatusView.text = "Bluetooth: connection failed"
                         }
                     }
                 } catch (error: Exception) {
-                    appendLog("BLE connection failed: ${error.message}")
+                    appendLog("Bluetooth connection failed: ${error.message}")
                     mainHandler.post {
-                        bleStatusView.text = "BLE: connection failed"
+                        bleStatusView.text = "Bluetooth: connection failed"
                     }
                 }
             }
@@ -301,9 +298,9 @@ class MainActivity : Activity() {
     }
 
     private fun initializeElm327() {
-        val client = bleClient
+        val client = elmTransport
         if (client == null) {
-            appendLog("Select and connect a BLE device before ELM327 initialization.")
+            appendLog("Select and connect a Bluetooth device before ELM327 initialization.")
             return
         }
 
@@ -327,6 +324,34 @@ class MainActivity : Activity() {
                     elmStatusView.text = "ELM327: initialization failed"
                 }
             }
+        }
+    }
+
+    private fun connectElmTransport(scanDevice: BleScanDevice): Elm327Transport? {
+        if (scanDevice.bonded) {
+            val sppClient = ClassicBluetoothElmClient(
+                device = scanDevice.device,
+                onLog = ::appendLog,
+            )
+            if (sppClient.connect()) {
+                appendLog("Using paired Bluetooth SPP transport.")
+                return sppClient
+            }
+            sppClient.close()
+            appendLog("Paired Bluetooth SPP failed. Falling back to BLE GATT.")
+        }
+
+        val bleClient = BleElmClient(
+            context = this,
+            device = scanDevice.device,
+            onLog = ::appendLog,
+        )
+        return if (bleClient.connect()) {
+            appendLog("Using BLE GATT transport.")
+            bleClient
+        } else {
+            bleClient.close()
+            null
         }
     }
 
