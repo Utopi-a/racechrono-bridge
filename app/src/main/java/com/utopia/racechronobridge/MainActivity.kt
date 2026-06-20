@@ -246,11 +246,17 @@ class MainActivity : Activity() {
     private fun renderScanDevices() {
         devicesLayout.removeAllViews()
         scanDevices.values
-            .sortedWith(compareByDescending<BleScanDevice> { it.likelyElmAdapter }.thenByDescending { it.rssi })
+            .sortedWith(
+                compareByDescending<BleScanDevice> { it.bonded }
+                    .thenByDescending { it.likelyElmAdapter }
+                    .thenByDescending { it.rssi },
+            )
             .forEach { device ->
                 val likelyLabel = if (device.likelyElmAdapter) "likely ELM" else "BLE"
+                val bondedLabel = if (device.bonded) "paired" else "scan"
+                val rssiLabel = if (device.rssi == BleDeviceScanner.RSSI_UNKNOWN) "-" else "${device.rssi} dBm"
                 devicesLayout.addView(
-                    button("${device.name} / ${device.address} / ${device.rssi} dBm / $likelyLabel") {
+                    button("${device.name} / ${device.address} / $rssiLabel / $likelyLabel / $bondedLabel") {
                         connectBleDevice(device)
                     },
                 )

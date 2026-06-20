@@ -13,6 +13,7 @@ data class BleScanDevice(
     val address: String,
     val rssi: Int,
     val likelyElmAdapter: Boolean,
+    val bonded: Boolean,
 )
 
 class BleDeviceScanner(
@@ -36,6 +37,7 @@ class BleDeviceScanner(
                     address = result.device.address,
                     rssi = result.rssi,
                     likelyElmAdapter = isLikelyElmAdapter(deviceName),
+                    bonded = result.device.bondState == BluetoothDevice.BOND_BONDED,
                 ),
             )
         }
@@ -55,6 +57,7 @@ class BleDeviceScanner(
             return
         }
 
+        emitBondedDevices()
         activeScanner.startScan(scanCallback)
         onScanStateChanged(true)
         onLog("BLE scan started.")
@@ -67,7 +70,28 @@ class BleDeviceScanner(
         onLog("BLE scan stopped.")
     }
 
+    @SuppressLint("MissingPermission")
+    private fun emitBondedDevices() {
+        val bondedDevices = bluetoothAdapter?.bondedDevices.orEmpty()
+        bondedDevices.forEach { device ->
+            val deviceName = device.name ?: "(paired device)"
+            onDeviceFound(
+                BleScanDevice(
+                    device = device,
+                    name = deviceName,
+                    address = device.address,
+                    rssi = RSSI_UNKNOWN,
+                    likelyElmAdapter = isLikelyElmAdapter(deviceName),
+                    bonded = true,
+                ),
+            )
+        }
+        onLog("Loaded ${bondedDevices.size} paired Bluetooth devices.")
+    }
+
     companion object {
+        const val RSSI_UNKNOWN = Int.MIN_VALUE
+
         private val LIKELY_NAMES = listOf(
             "Android-Vlink",
             "V-LINK",
