@@ -16,7 +16,7 @@ Important: enable the RaceChrono DIY `RC2/RC3` API only. Do not enable `NMEA 018
 - The last successful Bluetooth adapter is saved and auto-selected on the next launch.
 - Bluetooth connection success automatically starts ELM327 initialization and SSM2 polling.
 - Per-channel `Off` / `Fast` / `Slow` settings are available in the app and are persisted locally.
-- Custom SSM2 channels can be pasted as CSV or `key=value` text. A custom channel replaces one existing RC3 field such as `Analog 15`.
+- Custom SSM2 channels can be pasted or opened from a CSV/text file. A custom channel replaces one existing RC3 field such as `Analog 15`.
 - ELM327 initialization for SSM2 over CAN:
   - `ATZ`
   - `ATE0`
@@ -90,6 +90,8 @@ RaceChrono's RC3 data logger field names are fixed, so the app cannot rename `An
 | `a15` | Alternator duty % |
 
 Custom channel import format:
+
+Paste this text into `Custom SSM2 channels`, or tap `Open file` and select a `.csv` or `.txt` file with the same content.
 
 ```csv
 slot,label,unit,address,bytes,scale,offset,mode,signed

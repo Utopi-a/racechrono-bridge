@@ -7,6 +7,7 @@ import android.bluetooth.BluetoothManager
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -136,6 +137,38 @@ class MainActivity : Activity() {
         }
     }
 
+    @Deprecated("Used for simple platform document picker integration without extra dependencies.")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != CUSTOM_CHANNEL_FILE_REQUEST || resultCode != RESULT_OK) {
+            return
+        }
+
+        val uri = data?.data
+        if (uri == null) {
+            appendLog("Custom channel file picker returned no file.")
+            return
+        }
+
+        runCatching {
+            contentResolver.openInputStream(uri)?.bufferedReader().use { reader ->
+                reader?.readText().orEmpty()
+            }
+        }.onSuccess { text ->
+            if (text.isBlank()) {
+                appendLog("Selected custom channel file was empty.")
+                showUserMessage("Selected file was empty")
+            } else {
+                customChannelInput.setText(text)
+                customChannelInput.setSelection(customChannelInput.text.length)
+                appendLog("Loaded custom channel text from selected file.")
+            }
+        }.onFailure { error ->
+            appendLog("Custom channel file read failed: ${error.message}")
+            showUserMessage("Failed to read selected file")
+        }
+    }
+
     private fun buildContentView(): View {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -239,6 +272,10 @@ class MainActivity : Activity() {
                 orientation = LinearLayout.HORIZONTAL
                 addView(
                     compactButton("Paste", active = false) { pasteCustomChannelConfig() },
+                    LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
+                )
+                addView(
+                    compactButton("Open file", active = false) { openCustomChannelFile() },
                     LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
                 )
                 addView(
@@ -552,6 +589,28 @@ class MainActivity : Activity() {
         customChannelInput.setText(text)
         customChannelInput.setSelection(customChannelInput.text.length)
         appendLog("Pasted custom channel text from clipboard.")
+    }
+
+    private fun openCustomChannelFile() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "text/*"
+            putExtra(
+                Intent.EXTRA_MIME_TYPES,
+                arrayOf(
+                    "text/plain",
+                    "text/csv",
+                    "application/csv",
+                    "application/vnd.ms-excel",
+                ),
+            )
+        }
+        runCatching {
+            startActivityForResult(intent, CUSTOM_CHANNEL_FILE_REQUEST)
+        }.onFailure { error ->
+            appendLog("Custom channel file picker failed: ${error.message}")
+            showUserMessage("Could not open file picker")
+        }
     }
 
     private fun clearCustomChannels() {
@@ -945,6 +1004,7 @@ class MainActivity : Activity() {
 
     companion object {
         private const val BLE_PERMISSION_REQUEST = 1001
+        private const val CUSTOM_CHANNEL_FILE_REQUEST = 1002
         private const val KEY_LAST_DEVICE_ADDRESS = "last_device_address"
         private const val KEY_LAST_DEVICE_NAME = "last_device_name"
         private const val KEY_CUSTOM_CHANNELS = "custom_channels"
