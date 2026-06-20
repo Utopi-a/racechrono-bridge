@@ -33,6 +33,7 @@ Important: enable the RaceChrono DIY `RC2/RC3` API only. Do not enable `NMEA 018
   - `rpm = ((high << 8) + low) / 4.0`
   - `boostKpa = (boostRaw - 128.0) * 37.0 / 255.0 * 6.89476`
   - `coolantC = coolantRaw - 40.0`
+  - `gear = gearRaw + 1` only when `gearRaw` is `0..7`; `0xFF` is treated as unknown and left blank
   - throttle %, accelerator %, primary WGDC %, vehicle speed, gear, intake air temperature, battery voltage, mass airflow, ignition timing, knock correction, learned ignition timing, injector pulse width, fuel pump duty, alternator duty
 - Debug log display and clipboard copy.
 - Startup diagnostics show the previous Android process exit reason and any captured uncaught crash in the debug log.

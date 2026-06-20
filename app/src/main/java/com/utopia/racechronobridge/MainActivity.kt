@@ -590,28 +590,33 @@ class MainActivity : Activity() {
         TelemetryChannel.entries.forEach { channel ->
             val mode = channelModes.modeFor(channel)
             val row = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
+                orientation = LinearLayout.VERTICAL
                 setPadding(18, 12, 18, 12)
-                background = roundedRect(COLOR_SURFACE, radius = 16f)
+                background = roundedRect(COLOR_SURFACE, radius = 16f, strokeColor = COLOR_SURFACE_BORDER)
             }
 
-            val label = TextView(this).apply {
-                text = "${channel.rc3Field}\n${channel.mappingLabel}"
-                textSize = 14f
-                setTextColor(COLOR_TEXT_PRIMARY)
-            }
             row.addView(
-                label,
-                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
+                TextView(this).apply {
+                    text = channel.rc3Field
+                    textSize = 13f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(COLOR_ACCENT)
+                },
             )
-
-            ChannelMode.entries.forEach { candidate ->
-                row.addView(
-                    compactButton(candidate.label, active = mode == candidate) {
-                        setChannelMode(channel, candidate)
-                    },
-                )
-            }
+            row.addView(
+                TextView(this).apply {
+                    text = channel.mappingLabel
+                    textSize = 15f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(COLOR_TEXT_PRIMARY)
+                    setPadding(0, 2.dp(), 0, 8.dp())
+                },
+            )
+            row.addView(
+                modeSelector(mode) { candidate ->
+                    setChannelMode(channel, candidate)
+                },
+            )
 
             channelSettingsLayout.addView(
                 row,
@@ -622,6 +627,43 @@ class MainActivity : Activity() {
                     setMargins(0, 0, 0, 10)
                 },
             )
+        }
+    }
+
+    private fun modeSelector(
+        selectedMode: ChannelMode,
+        onModeSelected: (ChannelMode) -> Unit,
+    ): View {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            MODE_SELECTOR_ORDER.forEachIndexed { index, mode ->
+                addView(
+                    modeButton(mode.label, active = selectedMode == mode) { onModeSelected(mode) },
+                    LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                        val left = if (index == 0) 0 else 4.dp()
+                        val right = if (index == MODE_SELECTOR_ORDER.lastIndex) 0 else 4.dp()
+                        setMargins(left, 0, right, 0)
+                    },
+                )
+            }
+        }
+    }
+
+    private fun modeButton(label: String, active: Boolean, onClick: () -> Unit): Button {
+        return Button(this).apply {
+            text = label
+            isAllCaps = false
+            textSize = 13f
+            minHeight = 0
+            minimumHeight = 0
+            setPadding(10.dp(), 11.dp(), 10.dp(), 11.dp())
+            setTextColor(if (active) Color.BLACK else COLOR_TEXT_PRIMARY)
+            background = roundedRect(
+                if (active) COLOR_ACCENT else COLOR_SURFACE_ALT,
+                radius = 12f.dpFloat(),
+                strokeColor = if (active) COLOR_ACCENT else COLOR_SURFACE_BORDER,
+            )
+            setOnClickListener { onClick() }
         }
     }
 
@@ -685,14 +727,12 @@ class MainActivity : Activity() {
             row.addView(
                 LinearLayout(this).apply {
                     orientation = LinearLayout.HORIZONTAL
-                    ChannelMode.entries.forEach { candidate ->
-                        addView(
-                            compactButton(candidate.label, active = channel.mode == candidate) {
-                                setCustomChannelMode(channel.id, candidate)
-                            },
-                            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
-                        )
-                    }
+                    addView(
+                        modeSelector(channel.mode) { candidate ->
+                            setCustomChannelMode(channel.id, candidate)
+                        },
+                        LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 3f),
+                    )
                     addView(
                         compactButton("Remove", active = false) { removeCustomChannel(channel.id) },
                         LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
@@ -1047,7 +1087,7 @@ class MainActivity : Activity() {
     private fun telemetryLine(channel: TelemetryChannel, telemetry: SubaruTelemetry): String {
         val formatAndValue = when (channel) {
             TelemetryChannel.RPM -> "%.0f rpm" to telemetry.rpm
-            TelemetryChannel.GEAR -> "%d" to telemetry.gear
+            TelemetryChannel.GEAR -> "%s" to (telemetry.gear.takeIf { it > 0 }?.toString() ?: "-")
             TelemetryChannel.BOOST -> "%.1f kPa" to telemetry.boostKpa
             TelemetryChannel.COOLANT -> "%.1f C" to telemetry.coolantC
             TelemetryChannel.THROTTLE -> "%.1f %%" to telemetry.throttlePercent
@@ -1230,6 +1270,7 @@ class MainActivity : Activity() {
         private const val CUSTOM_CHANNEL_SAMPLE =
             "slot,label,unit,address,bytes,scale,offset,mode,signed\n" +
                 "Analog 15,Oil temp,C,0x000108,1,1,-40,Slow,false"
+        private val MODE_SELECTOR_ORDER = listOf(ChannelMode.OFF, ChannelMode.SLOW, ChannelMode.FAST)
         private val COLOR_BACKGROUND = Color.rgb(7, 12, 17)
         private val COLOR_SURFACE = Color.rgb(18, 29, 38)
         private val COLOR_TELEMETRY_SURFACE = Color.rgb(10, 19, 24)

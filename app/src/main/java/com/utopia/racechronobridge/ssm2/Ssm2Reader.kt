@@ -62,7 +62,7 @@ class Ssm2Reader(
                 vehicleSpeedKph = elmSession.readByte(Ssm2Parameter.VEHICLE_SPEED).toDouble(),
             )
             TelemetryChannel.GEAR -> telemetry.copy(
-                gear = elmSession.readByte(Ssm2Parameter.GEAR_POSITION) + 1,
+                gear = elmSession.readByte(Ssm2Parameter.GEAR_POSITION).toGearPosition(),
             )
             TelemetryChannel.INTAKE_AIR_TEMP -> telemetry.copy(
                 intakeAirTempC = elmSession.readByte(Ssm2Parameter.INTAKE_AIR_TEMP).toTemperatureC(),
@@ -169,3 +169,5 @@ class Ssm2Reader(
         private val SLOW_CHANNEL_ORDER = TelemetryChannel.entries.toList()
     }
 }
+
+internal fun Int.toGearPosition(): Int = if (this in 0..7) this + 1 else 0
