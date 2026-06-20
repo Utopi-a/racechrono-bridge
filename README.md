@@ -4,6 +4,8 @@ Android bridge app for reading Subaru SSM2 over CAN through an iCar Pro 2S BLE E
 
 The app does not modify RaceChrono. It exposes a local RaceChrono DIY RC3 TCP stream on `127.0.0.1:9876`.
 
+Important: enable the RaceChrono DIY `RC2/RC3` API only. Do not enable `NMEA 0183`, because that makes the DIY device behave like a GPS receiver and can conflict with RaceChrono's internal GPS receiver.
+
 ## Current MVP
 
 - Offline fake telemetry mode for RaceChrono connection testing without the car.
@@ -33,6 +35,7 @@ The app does not modify RaceChrono. It exposes a local RaceChrono DIY RC3 TCP st
 2. Tap `Start TCP server`.
 3. Tap `Start fake telemetry`.
 4. In RaceChrono, connect a RaceChrono DIY TCP/IP device to `127.0.0.1:9876`.
+5. Enable `RC2/RC3`; keep `NMEA 0183` off.
 
 ### iCar Pro 2S / SSM2 test
 
@@ -43,6 +46,7 @@ The app does not modify RaceChrono. It exposes a local RaceChrono DIY RC3 TCP st
 5. Tap `Initialize ELM327`.
 6. Tap `Start SSM2 polling`.
 7. Connect RaceChrono DIY TCP/IP to `127.0.0.1:9876`.
+8. Enable `RC2/RC3`; keep `NMEA 0183` off.
 
 ## RaceChrono Setup
 
@@ -52,7 +56,9 @@ Other device: RaceChrono DIY
 Connection: TCP/IP
 Host: 127.0.0.1
 Port: 9876
-API: RC3 stream
+API: RC2/RC3 ON
+NMEA 0183: OFF
+Internal GPS receiver: ON
 ```
 
 RC3 channel mapping:

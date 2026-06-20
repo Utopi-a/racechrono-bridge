@@ -77,7 +77,7 @@ class MainActivity : Activity() {
             "server=stopped / client=not connected"
         renderTelemetry(SubaruTelemetry.EMPTY)
         refreshLog()
-        appendLog("App ready. Start TCP server, then fake telemetry or BLE SSM2 polling.")
+        appendLog("App ready. In RaceChrono, enable RC2/RC3 only. Do not enable NMEA 0183.")
     }
 
     override fun onDestroy() {
@@ -154,6 +154,15 @@ class MainActivity : Activity() {
         controls.addView(button("Start SSM2 polling") { startRealTelemetry() })
         controls.addView(button("Stop telemetry") { stopTelemetry() })
         controls.addView(button("Copy debug log") { copyDebugLog() })
+
+        root.addView(
+            TextView(this).apply {
+                text = "RaceChrono: DIY > TCP/IP > RC2/RC3 ON, NMEA 0183 OFF, 127.0.0.1:9876"
+                textSize = 14f
+                typeface = Typeface.DEFAULT_BOLD
+                setPadding(0, 16, 0, 8)
+            },
+        )
 
         root.addView(
             TextView(this).apply {
