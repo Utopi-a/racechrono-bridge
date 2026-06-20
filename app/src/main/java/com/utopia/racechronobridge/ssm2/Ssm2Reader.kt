@@ -38,68 +38,73 @@ class Ssm2Reader(
     private fun readChannel(channel: TelemetryChannel, telemetry: SubaruTelemetry): SubaruTelemetry {
         return when (channel) {
             TelemetryChannel.RPM -> telemetry.copy(
-                rpm = readU16(
-                    high = Ssm2Parameter.RPM_HIGH,
-                    low = Ssm2Parameter.RPM_LOW,
+                rpm = Ssm2ValueDecoders.unsigned16(
+                    high = elmSession.readByte(Ssm2Parameter.RPM_HIGH),
+                    low = elmSession.readByte(Ssm2Parameter.RPM_LOW),
                 ) / 4.0,
             )
             TelemetryChannel.BOOST -> telemetry.copy(
-                boostKpa = elmSession.readByte(Ssm2Parameter.BOOST).toRelativePressureKpa(),
+                boostKpa = Ssm2ValueDecoders.relativePressureKpa(elmSession.readByte(Ssm2Parameter.BOOST)),
             )
             TelemetryChannel.COOLANT -> telemetry.copy(
-                coolantC = elmSession.readByte(Ssm2Parameter.COOLANT).toTemperatureC(),
+                coolantC = Ssm2ValueDecoders.temperatureC(elmSession.readByte(Ssm2Parameter.COOLANT)),
             )
             TelemetryChannel.THROTTLE -> telemetry.copy(
-                throttlePercent = elmSession.readByte(Ssm2Parameter.THROTTLE).toPercent(),
+                throttlePercent = Ssm2ValueDecoders.percent(elmSession.readByte(Ssm2Parameter.THROTTLE)),
             )
             TelemetryChannel.ACCELERATOR -> telemetry.copy(
-                acceleratorPercent = elmSession.readByte(Ssm2Parameter.ACCELERATOR).toPercent(),
+                acceleratorPercent = Ssm2ValueDecoders.percent(elmSession.readByte(Ssm2Parameter.ACCELERATOR)),
             )
             TelemetryChannel.PRIMARY_WGDC -> telemetry.copy(
-                primaryWastegateDutyPercent = elmSession.readByte(Ssm2Parameter.PRIMARY_WGDC).toPercent(),
+                primaryWastegateDutyPercent = Ssm2ValueDecoders.percent(
+                    elmSession.readByte(Ssm2Parameter.PRIMARY_WGDC),
+                ),
             )
             TelemetryChannel.VEHICLE_SPEED -> telemetry.copy(
                 vehicleSpeedKph = elmSession.readByte(Ssm2Parameter.VEHICLE_SPEED).toDouble(),
             )
             TelemetryChannel.GEAR -> telemetry.copy(
-                gear = elmSession.readByte(Ssm2Parameter.GEAR_POSITION).toGearPosition(),
+                gear = Ssm2ValueDecoders.gearPosition(elmSession.readByte(Ssm2Parameter.GEAR_POSITION)),
             )
             TelemetryChannel.INTAKE_AIR_TEMP -> telemetry.copy(
-                intakeAirTempC = elmSession.readByte(Ssm2Parameter.INTAKE_AIR_TEMP).toTemperatureC(),
+                intakeAirTempC = Ssm2ValueDecoders.temperatureC(elmSession.readByte(Ssm2Parameter.INTAKE_AIR_TEMP)),
             )
             TelemetryChannel.BATTERY_VOLTAGE -> telemetry.copy(
                 batteryVoltage = elmSession.readByte(Ssm2Parameter.BATTERY_VOLTAGE) * 8.0 / 100.0,
             )
             TelemetryChannel.MASS_AIRFLOW -> telemetry.copy(
-                massAirflowGps = readU16(
-                    high = Ssm2Parameter.MASS_AIRFLOW_HIGH,
-                    low = Ssm2Parameter.MASS_AIRFLOW_LOW,
+                massAirflowGps = Ssm2ValueDecoders.unsigned16(
+                    high = elmSession.readByte(Ssm2Parameter.MASS_AIRFLOW_HIGH),
+                    low = elmSession.readByte(Ssm2Parameter.MASS_AIRFLOW_LOW),
                 ) / 100.0,
             )
             TelemetryChannel.IGNITION_TIMING -> telemetry.copy(
-                ignitionTimingDeg = elmSession.readByte(Ssm2Parameter.IGNITION_TIMING).toSignedHalfDegree(),
+                ignitionTimingDeg = Ssm2ValueDecoders.signedHalfDegree(
+                    elmSession.readByte(Ssm2Parameter.IGNITION_TIMING),
+                ),
             )
             TelemetryChannel.KNOCK_CORRECTION -> telemetry.copy(
-                knockCorrectionDeg = elmSession.readByte(Ssm2Parameter.KNOCK_CORRECTION).toSignedHalfDegree(),
+                knockCorrectionDeg = Ssm2ValueDecoders.signedHalfDegree(
+                    elmSession.readByte(Ssm2Parameter.KNOCK_CORRECTION),
+                ),
             )
             TelemetryChannel.LEARNED_IGNITION -> telemetry.copy(
-                learnedIgnitionTimingDeg = elmSession.readByte(Ssm2Parameter.LEARNED_IGNITION_TIMING)
-                    .toSignedHalfDegree(),
+                learnedIgnitionTimingDeg = Ssm2ValueDecoders.signedHalfDegree(
+                    elmSession.readByte(Ssm2Parameter.LEARNED_IGNITION_TIMING),
+                ),
             )
             TelemetryChannel.INJECTOR_PULSE_WIDTH -> telemetry.copy(
                 injectorPulseWidthMs = elmSession.readByte(Ssm2Parameter.INJECTOR_PULSE_WIDTH) * 256.0 / 1000.0,
             )
             TelemetryChannel.FUEL_PUMP_DUTY -> telemetry.copy(
-                fuelPumpDutyPercent = elmSession.readByte(Ssm2Parameter.FUEL_PUMP_DUTY).toPercent(),
+                fuelPumpDutyPercent = Ssm2ValueDecoders.percent(
+                    elmSession.readByte(Ssm2Parameter.FUEL_PUMP_DUTY),
+                ),
             )
             TelemetryChannel.ALTERNATOR_DUTY -> telemetry.copy(
                 alternatorDutyPercent = elmSession.readByte(Ssm2Parameter.ALTERNATOR_DUTY).toDouble(),
             )
         }
-    }
-
-    private fun readU16(high: Ssm2Parameter, low: Ssm2Parameter): Int {
-        return (elmSession.readByte(high) shl 8) + elmSession.readByte(low)
     }
 
     private fun readCustomChannel(
@@ -120,24 +125,10 @@ class Ssm2Reader(
             )
         }
         return if (channel.signed) {
-            rawValue.toSignedValue(bytes = channel.bytes)
+            Ssm2ValueDecoders.signedValue(rawValue, bytes = channel.bytes)
         } else {
             rawValue
         }
-    }
-
-    private fun Int.toPercent(): Double = this * 100.0 / 255.0
-
-    private fun Int.toTemperatureC(): Double = this - 40.0
-
-    private fun Int.toRelativePressureKpa(): Double = (this - 128.0) * 37.0 / 255.0 * 6.89476
-
-    private fun Int.toSignedHalfDegree(): Double = (this - 128.0) / 2.0
-
-    private fun Int.toSignedValue(bytes: Int): Int {
-        val signBit = 1 shl (bytes * 8 - 1)
-        val valueRange = 1 shl (bytes * 8)
-        return if (this and signBit != 0) this - valueRange else this
     }
 
     private fun nextSlowTarget(
@@ -169,5 +160,3 @@ class Ssm2Reader(
         private val SLOW_CHANNEL_ORDER = TelemetryChannel.entries.toList()
     }
 }
-
-internal fun Int.toGearPosition(): Int = if (this in 0..7) this + 1 else 0

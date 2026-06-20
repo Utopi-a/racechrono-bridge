@@ -75,6 +75,18 @@ class Rc3SentenceTest {
     }
 
     @Test
+    fun formatLeavesUnknownGearBlank() {
+        val sentence = rc3Sentence.format(
+            count = 1,
+            telemetry = SubaruTelemetry.EMPTY.copy(rpm = 2500.0, gear = 0),
+        )
+
+        val fields = sentence.substringAfter("${'$'}").substringBefore("*").split(",")
+        assertEquals("2500.000", fields[9])
+        assertEquals("", fields[10])
+    }
+
+    @Test
     fun telemetryChannelsExposeRaceChronoFieldMapping() {
         assertEquals("Digital 1/RPM", TelemetryChannel.RPM.rc3Field)
         assertEquals("Digital 2", TelemetryChannel.GEAR.rc3Field)
