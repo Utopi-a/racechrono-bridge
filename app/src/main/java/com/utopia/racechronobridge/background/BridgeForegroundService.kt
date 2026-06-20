@@ -21,10 +21,18 @@ class BridgeForegroundService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         promoteToForeground()
+        val runtime = BridgeRuntimeStore.get(this)
+        runtime.startTcpServer()
+        runtime.attemptAutoConnectLastDevice()
         return START_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onDestroy() {
+        BridgeRuntimeStore.shutdown()
+        super.onDestroy()
+    }
 
     private fun promoteToForeground() {
         val notification = buildNotification()

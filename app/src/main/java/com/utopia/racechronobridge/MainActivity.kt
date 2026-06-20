@@ -2,8 +2,6 @@ package com.utopia.racechronobridge
 
 import android.Manifest
 import android.app.Activity
-import android.bluetooth.BluetoothDevice
-import android.bluetooth.BluetoothManager
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -27,38 +25,24 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import com.utopia.racechronobridge.ble.BleDeviceScanner
-import com.utopia.racechronobridge.ble.BleElmClient
 import com.utopia.racechronobridge.ble.BleScanDevice
-import com.utopia.racechronobridge.bluetooth.ClassicBluetoothElmClient
 import com.utopia.racechronobridge.background.BridgeForegroundService
+import com.utopia.racechronobridge.background.BridgeRuntime
+import com.utopia.racechronobridge.background.BridgeRuntimeState
+import com.utopia.racechronobridge.background.BridgeRuntimeStore
 import com.utopia.racechronobridge.diagnostics.AppExitDiagnostics
-import com.utopia.racechronobridge.elm.Elm327Session
-import com.utopia.racechronobridge.elm.Elm327Transport
-import com.utopia.racechronobridge.logging.DebugLog
 import com.utopia.racechronobridge.racechrono.RaceChronoTcpServer
-import com.utopia.racechronobridge.racechrono.Rc3Sentence
 import com.utopia.racechronobridge.ssm2.ChannelMode
 import com.utopia.racechronobridge.ssm2.CustomTelemetryChannel
 import com.utopia.racechronobridge.ssm2.CustomTelemetryChannelParser
-import com.utopia.racechronobridge.ssm2.FakeSubaruTelemetrySource
 import com.utopia.racechronobridge.ssm2.StandardSsm2Preset
-import com.utopia.racechronobridge.ssm2.Ssm2Reader
 import com.utopia.racechronobridge.ssm2.SubaruTelemetry
 import com.utopia.racechronobridge.ssm2.TelemetryChannel
 import com.utopia.racechronobridge.ssm2.modeFor
 import java.util.Locale
-import java.util.concurrent.Executors
-import java.util.concurrent.ScheduledExecutorService
-import java.util.concurrent.ScheduledFuture
-import java.util.concurrent.TimeUnit
 
-class MainActivity : Activity() {
+class MainActivity : Activity(), BridgeRuntime.Listener {
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val debugLog = DebugLog()
-    private val fakeTelemetrySource = FakeSubaruTelemetrySource()
-    private val pollExecutor: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor()
-    private val rc3Sentence = Rc3Sentence()
-    private val scanDevices = linkedMapOf<String, BleScanDevice>()
     private val channelModes = TelemetryChannel.defaultModes()
     private val customChannels = mutableListOf<CustomTelemetryChannel>()
     private val preferences: SharedPreferences by lazy {
@@ -66,16 +50,11 @@ class MainActivity : Activity() {
     }
 
     private var pendingBlePermissionAction: (() -> Unit)? = null
-    private var bleScanner: BleDeviceScanner? = null
-    private var elmTransport: Elm327Transport? = null
-    private var elmSession: Elm327Session? = null
-    private var ssm2Reader: Ssm2Reader? = null
-    private var fakePollingTask: ScheduledFuture<*>? = null
-    private var realPollingTask: ScheduledFuture<*>? = null
+    private var notificationPermissionRequested = false
     private var lastTelemetry: SubaruTelemetry = SubaruTelemetry.EMPTY
-    private var rc3Count = 0
+    private lateinit var runtime: BridgeRuntime
+    private var currentRuntimeState = BridgeRuntimeState()
 
-    private lateinit var tcpServer: RaceChronoTcpServer
     private lateinit var telemetryView: TextView
     private lateinit var eventView: TextView
     private lateinit var tcpStatusView: TextView
@@ -94,28 +73,23 @@ class MainActivity : Activity() {
         val startupDiagnostics = AppExitDiagnostics.startupMessages(this)
         AppExitDiagnostics.recordLifecycle(this, "onCreate")
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        runtime = BridgeRuntimeStore.get(applicationContext)
         loadChannelModes()
         loadCustomChannels()
-
-        tcpServer = RaceChronoTcpServer(
-            onStatusChanged = { status ->
-                mainHandler.post {
-                    tcpStatusView.text = "${status.host}:${status.port}\n" +
-                        "${if (status.running) "server running" else "server stopped"} / " +
-                        if (status.clientConnected) "client connected" else "no client"
-                }
-            },
-            onLog = ::appendLog,
-        )
+        runtime.setChannelModes(channelModes)
+        runtime.setCustomChannels(customChannels)
 
         setContentView(buildContentView())
         tcpStatusView.text = "${RaceChronoTcpServer.HOST}:${RaceChronoTcpServer.PORT}\nserver stopped / no client"
         renderTelemetry(SubaruTelemetry.EMPTY)
         refreshLog()
-        startupDiagnostics.forEach(::appendLog)
-        appendLog("App ready. In RaceChrono, enable RC2/RC3 only. Do not enable NMEA 0183.")
-        tcpServer.start()
-        attemptAutoConnectLastDevice()
+        runtime.addListener(this)
+        startupDiagnostics.forEach(runtime::appendUserLog)
+        runtime.appendUserLog("App ready. In RaceChrono, enable RC2/RC3 only. Do not enable NMEA 0183.")
+        ensureBridgePermissions {
+            startBridgeForegroundService()
+            runtime.attemptAutoConnectLastDevice()
+        }
     }
 
     override fun onResume() {
@@ -135,15 +109,37 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         AppExitDiagnostics.recordLifecycle(this, "onDestroy")
-        stopTelemetry()
-        bleScanner?.stop()
-        elmTransport?.close()
-        tcpServer.stop()
-        pollExecutor.shutdownNow()
+        runtime.removeListener(this)
         if (isFinishing) {
             BridgeForegroundService.stop(this)
         }
         super.onDestroy()
+    }
+
+    override fun onBridgeRuntimeStateChanged(state: BridgeRuntimeState) {
+        currentRuntimeState = state
+        if (::tcpStatusView.isInitialized) {
+            tcpStatusView.text = "${state.tcpStatus.host}:${state.tcpStatus.port}\n" +
+                "${if (state.tcpStatus.running) "server running" else "server stopped"} / " +
+                if (state.tcpStatus.clientConnected) "client connected" else "no client"
+        }
+        if (::bleStatusView.isInitialized) {
+            bleStatusView.text = state.bleStatus
+        }
+        if (::elmStatusView.isInitialized) {
+            elmStatusView.text = state.elmStatus
+        }
+        if (::pollingStatusView.isInitialized) {
+            pollingStatusView.text = state.pollingStatus
+        }
+        lastTelemetry = state.telemetry
+        if (::telemetryView.isInitialized) {
+            renderTelemetry(state.telemetry)
+        }
+        if (::devicesLayout.isInitialized) {
+            renderScanDevices(state.scanDevices)
+        }
+        refreshLog()
     }
 
     override fun onRequestPermissionsResult(
@@ -242,14 +238,39 @@ class MainActivity : Activity() {
         root.addView(
             actionGrid(
                 listOf(
-                    ActionSpec("Scan Bluetooth") { startBleScan() },
-                    ActionSpec("Initialize ELM327") { initializeElm327() },
-                    ActionSpec("Start SSM2") { startRealTelemetry() },
-                    ActionSpec("Stop telemetry") { stopTelemetry() },
-                    ActionSpec("Fake 5 Hz") { startFakeTelemetry() },
-                    ActionSpec("Stop scan") { bleScanner?.stop() },
-                    ActionSpec("Start TCP") { tcpServer.start() },
-                    ActionSpec("Stop TCP") { tcpServer.stop() },
+                    ActionSpec("Scan Bluetooth") {
+                        ensureBridgePermissions {
+                            startBridgeForegroundService()
+                            runtime.startBleScan()
+                        }
+                    },
+                    ActionSpec("Initialize ELM327") {
+                        ensureBridgePermissions {
+                            startBridgeForegroundService()
+                            runtime.initializeElm327()
+                        }
+                    },
+                    ActionSpec("Start SSM2") {
+                        ensureBridgePermissions {
+                            startBridgeForegroundService()
+                            runtime.startRealTelemetry()
+                        }
+                    },
+                    ActionSpec("Stop telemetry") { runtime.stopTelemetry() },
+                    ActionSpec("Fake 5 Hz") {
+                        ensureBridgePermissions {
+                            startBridgeForegroundService()
+                            runtime.startFakeTelemetry()
+                        }
+                    },
+                    ActionSpec("Stop scan") { runtime.stopBleScan() },
+                    ActionSpec("Start TCP") {
+                        ensureBridgePermissions {
+                            startBridgeForegroundService()
+                            runtime.startTcpServer()
+                        }
+                    },
+                    ActionSpec("Stop TCP") { runtime.stopTcpServer() },
                     ActionSpec("Copy mapping") { copyRaceChronoMapping() },
                     ActionSpec("Copy log") { copyDebugLog() },
                 ),
@@ -525,61 +546,21 @@ class MainActivity : Activity() {
 
     private fun Float.dpFloat(): Float = this * resources.displayMetrics.density
 
-    private fun startBleScan() {
-        ensureBlePermissions {
-            scanDevices.clear()
-            devicesLayout.removeAllViews()
-            scanner().start()
-        }
-    }
-
-    private fun scanner(): BleDeviceScanner {
-        val current = bleScanner
-        if (current != null) {
-            return current
-        }
-
-        val scanner = BleDeviceScanner(
-            context = this,
-            onDeviceFound = { device ->
-                mainHandler.post {
-                    scanDevices[device.address] = device
-                    renderScanDevices()
-                }
-            },
-            onScanStateChanged = { scanning ->
-                mainHandler.post {
-                    bleStatusView.text = if (scanning) {
-                        "scanning"
-                    } else {
-                        "scan stopped"
-                    }
-                }
-            },
-            onLog = ::appendLog,
-        )
-        bleScanner = scanner
-        return scanner
-    }
-
-    private fun renderScanDevices() {
+    private fun renderScanDevices(devices: List<BleScanDevice>) {
         devicesLayout.removeAllViews()
-        scanDevices.values
-            .sortedWith(
-                compareByDescending<BleScanDevice> { it.bonded }
-                    .thenByDescending { it.likelyElmAdapter }
-                    .thenByDescending { it.rssi },
+        devices.forEach { device ->
+            val likelyLabel = if (device.likelyElmAdapter) "likely ELM" else "BLE"
+            val bondedLabel = if (device.bonded) "paired" else "scan"
+            val rssiLabel = if (device.rssi == BleDeviceScanner.RSSI_UNKNOWN) "-" else "${device.rssi} dBm"
+            devicesLayout.addView(
+                button("${device.name} / ${device.address} / $rssiLabel / $likelyLabel / $bondedLabel") {
+                    ensureBridgePermissions {
+                        startBridgeForegroundService()
+                        runtime.connectBleDevice(device)
+                    }
+                },
             )
-            .forEach { device ->
-                val likelyLabel = if (device.likelyElmAdapter) "likely ELM" else "BLE"
-                val bondedLabel = if (device.bonded) "paired" else "scan"
-                val rssiLabel = if (device.rssi == BleDeviceScanner.RSSI_UNKNOWN) "-" else "${device.rssi} dBm"
-                devicesLayout.addView(
-                    button("${device.name} / ${device.address} / $rssiLabel / $likelyLabel / $bondedLabel") {
-                        connectBleDevice(device)
-                    },
-                )
-            }
+        }
     }
 
     private fun renderChannelSettings() {
@@ -670,6 +651,7 @@ class MainActivity : Activity() {
     private fun setChannelMode(channel: TelemetryChannel, mode: ChannelMode) {
         channelModes[channel] = mode
         preferences.edit().putString(channel.preferenceKey, mode.name).apply()
+        runtime.setChannelModes(channelModes)
         renderChannelSettings()
         renderTelemetry(lastTelemetry)
         appendLog("${channel.label} mode changed to ${mode.label}.")
@@ -864,207 +846,11 @@ class MainActivity : Activity() {
         preferences.edit()
             .putString(KEY_CUSTOM_CHANNELS, customChannels.joinToString(separator = "\n") { it.toConfigLine() })
             .apply()
-    }
-
-    private fun connectBleDevice(scanDevice: BleScanDevice) {
-        ensureBlePermissions {
-            startBridgeForegroundService()
-            bleScanner?.stop()
-            bleStatusView.text = "connecting\n${scanDevice.name}"
-            appendLog("Connecting Bluetooth device: ${scanDevice.name} ${scanDevice.address}")
-            pollExecutor.execute {
-                try {
-                    elmTransport?.close()
-                    elmSession = null
-                    ssm2Reader = null
-                    val transport = connectElmTransport(scanDevice)
-                    if (transport != null) {
-                        elmTransport = transport
-                        saveLastBluetoothDevice(scanDevice)
-                        mainHandler.post {
-                            bleStatusView.text = "connected\n${scanDevice.name}"
-                            showUserMessage("Bluetooth接続に成功しました: ${scanDevice.name}")
-                            elmStatusView.text = "not initialized"
-                            initializeElm327(startPollingOnSuccess = true)
-                        }
-                    } else {
-                        mainHandler.post {
-                            bleStatusView.text = "connection failed"
-                            showUserMessage("Bluetooth接続に失敗しました")
-                        }
-                    }
-                } catch (error: Exception) {
-                    appendLog("Bluetooth connection failed: ${error.message}")
-                    mainHandler.post {
-                        bleStatusView.text = "connection failed"
-                        showUserMessage("Bluetooth接続に失敗しました")
-                    }
-                }
-            }
-        }
-    }
-
-    private fun initializeElm327(startPollingOnSuccess: Boolean = false) {
-        val client = elmTransport
-        if (client == null) {
-            appendLog("Select and connect a Bluetooth device before ELM327 initialization.")
-            return
-        }
-
-        elmStatusView.text = "initializing"
-        pollExecutor.execute {
-            try {
-                val session = Elm327Session(
-                    client = client,
-                    onRawResponse = ::appendLog,
-                    onLog = ::appendLog,
-                )
-                session.initialize()
-                elmSession = session
-                ssm2Reader = Ssm2Reader(session)
-                mainHandler.post {
-                    elmStatusView.text = "initialized for SSM2"
-                    showUserMessage("ELM327初期化に成功しました")
-                    if (startPollingOnSuccess) {
-                        startRealTelemetry()
-                    }
-                }
-            } catch (error: Exception) {
-                appendLog("ELM327 initialization failed: ${error.message}")
-                mainHandler.post {
-                    elmStatusView.text = "initialization failed"
-                    showUserMessage("ELM327初期化に失敗しました")
-                }
-            }
-        }
-    }
-
-    private fun connectElmTransport(scanDevice: BleScanDevice): Elm327Transport? {
-        if (scanDevice.bonded) {
-            val sppClient = ClassicBluetoothElmClient(
-                device = scanDevice.device,
-                onLog = ::appendLog,
-            )
-            if (sppClient.connect()) {
-                appendLog("Using paired Bluetooth SPP transport.")
-                return sppClient
-            }
-            sppClient.close()
-            appendLog("Paired Bluetooth SPP failed. Falling back to BLE GATT.")
-        }
-
-        val bleClient = BleElmClient(
-            context = this,
-            device = scanDevice.device,
-            onLog = ::appendLog,
-        )
-        return if (bleClient.connect()) {
-            appendLog("Using BLE GATT transport.")
-            bleClient
-        } else {
-            bleClient.close()
-            null
-        }
-    }
-
-    private fun startFakeTelemetry() {
-        if (fakePollingTask != null) {
-            appendLog("Fake telemetry is already running.")
-            return
-        }
-
-        startBridgeForegroundServiceIfBluetoothPermitted()
-        stopRealTelemetry()
-        appendLog("Starting fake telemetry at 5 Hz.")
-        pollingStatusView.text = "fake telemetry\n5 Hz"
-        fakePollingTask = pollExecutor.scheduleAtFixedRate(
-            {
-                val telemetry = fakeTelemetrySource.next()
-                publishTelemetry(telemetry)
-            },
-            0,
-            200,
-            TimeUnit.MILLISECONDS,
-        )
-    }
-
-    private fun startRealTelemetry() {
-        val reader = ssm2Reader
-        if (reader == null) {
-            appendLog("Initialize ELM327 before starting SSM2 polling.")
-            return
-        }
-        if (realPollingTask != null) {
-            appendLog("SSM2 polling is already running.")
-            return
-        }
-
-        startBridgeForegroundServiceIfBluetoothPermitted()
-        stopFakeTelemetry()
-        appendLog("Starting SSM2 polling.")
-        pollingStatusView.text = "SSM2 over CAN"
-        showUserMessage("SSM2 pollingを開始しました")
-        realPollingTask = pollExecutor.scheduleWithFixedDelay(
-            {
-                try {
-                    publishTelemetry(reader.readTelemetry(lastTelemetry, channelModes, customChannels))
-                } catch (error: Exception) {
-                    appendLog("SSM2 polling failed: ${error.message}")
-                }
-            },
-            0,
-            250,
-            TimeUnit.MILLISECONDS,
-        )
-    }
-
-    private fun publishTelemetry(telemetry: SubaruTelemetry) {
-        lastTelemetry = telemetry
-        val sentence = rc3Sentence.format(
-            count = rc3Count,
-            telemetry = telemetry,
-            channelModes = channelModes,
-            customChannels = customChannels,
-        )
-        rc3Count = (rc3Count + 1) and 0xFFFF
-        tcpServer.send(sentence)
-        mainHandler.post { renderTelemetry(telemetry) }
-    }
-
-    private fun stopTelemetry() {
-        stopFakeTelemetry()
-        stopRealTelemetry()
-    }
-
-    private fun stopFakeTelemetry() {
-        val task = fakePollingTask ?: return
-        task.cancel(true)
-        fakePollingTask = null
-        if (::pollingStatusView.isInitialized) {
-            pollingStatusView.text = "stopped"
-        }
-        appendLog("Fake telemetry stopped.")
-    }
-
-    private fun stopRealTelemetry() {
-        val task = realPollingTask ?: return
-        task.cancel(true)
-        realPollingTask = null
-        if (::pollingStatusView.isInitialized) {
-            pollingStatusView.text = "stopped"
-        }
-        appendLog("SSM2 polling stopped.")
-    }
-
-    private fun startBridgeForegroundServiceIfBluetoothPermitted() {
-        if (hasBlePermissions()) {
-            startBridgeForegroundService()
-        } else {
-            appendLog("Foreground keep-alive service is waiting for Bluetooth permission.")
-        }
+        runtime.setCustomChannels(customChannels)
     }
 
     private fun startBridgeForegroundService() {
+        requestNotificationPermissionIfNeeded()
         runCatching {
             BridgeForegroundService.start(this)
         }.onSuccess {
@@ -1122,8 +908,8 @@ class MainActivity : Activity() {
         return "${channel.rc3Field.padEnd(13)} ${channel.label.padEnd(16)} $renderedValue"
     }
 
-    private fun ensureBlePermissions(action: () -> Unit) {
-        val missingPermissions = blePermissions().filter { permission ->
+    private fun ensureBridgePermissions(action: () -> Unit) {
+        val missingPermissions = bridgePermissions().filter { permission ->
             checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED
         }
         if (missingPermissions.isEmpty()) {
@@ -1133,16 +919,10 @@ class MainActivity : Activity() {
 
         pendingBlePermissionAction = action
         requestPermissions(missingPermissions.toTypedArray(), BLE_PERMISSION_REQUEST)
-        appendLog("Requesting BLE permissions: ${missingPermissions.joinToString()}")
+        appendLog("Requesting bridge permissions: ${missingPermissions.joinToString()}")
     }
 
-    private fun hasBlePermissions(): Boolean {
-        return blePermissions().all { permission ->
-            checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
-        }
-    }
-
-    private fun blePermissions(): List<String> {
+    private fun bridgePermissions(): List<String> {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             listOf(
                 Manifest.permission.BLUETOOTH_SCAN,
@@ -1153,42 +933,18 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun attemptAutoConnectLastDevice() {
-        val address = preferences.getString(KEY_LAST_DEVICE_ADDRESS, null) ?: return
-        val savedName = preferences.getString(KEY_LAST_DEVICE_NAME, "(last device)") ?: "(last device)"
-        appendLog("Auto-selecting last Bluetooth device: $savedName $address")
-        ensureBlePermissions {
-            try {
-                val bluetoothAdapter =
-                    (getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
-                if (bluetoothAdapter == null) {
-                    appendLog("Bluetooth adapter is unavailable.")
-                    return@ensureBlePermissions
-                }
-                val device = bluetoothAdapter.getRemoteDevice(address)
-                val name = device.name ?: savedName
-                val scanDevice = BleScanDevice(
-                    device = device,
-                    name = name,
-                    address = address,
-                    rssi = BleDeviceScanner.RSSI_UNKNOWN,
-                    likelyElmAdapter = BleDeviceScanner.isLikelyElmAdapter(name),
-                    bonded = device.bondState == BluetoothDevice.BOND_BONDED,
-                )
-                scanDevices[address] = scanDevice
-                renderScanDevices()
-                connectBleDevice(scanDevice)
-            } catch (error: Exception) {
-                appendLog("Auto Bluetooth connection failed before connect: ${error.message}")
-            }
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            return
         }
-    }
-
-    private fun saveLastBluetoothDevice(scanDevice: BleScanDevice) {
-        preferences.edit()
-            .putString(KEY_LAST_DEVICE_ADDRESS, scanDevice.address)
-            .putString(KEY_LAST_DEVICE_NAME, scanDevice.name)
-            .apply()
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
+            return
+        }
+        if (notificationPermissionRequested) {
+            return
+        }
+        notificationPermissionRequested = true
+        requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), NOTIFICATION_PERMISSION_REQUEST)
     }
 
     private fun showUserMessage(message: String) {
@@ -1214,20 +970,21 @@ class MainActivity : Activity() {
     }
 
     private fun appendLog(message: String) {
-        debugLog.append(message)
-        mainHandler.post { refreshLog() }
+        if (::runtime.isInitialized) {
+            runtime.appendUserLog(message)
+        }
     }
 
     private fun refreshLog() {
         if (::logView.isInitialized) {
-            logView.text = debugLog.snapshot().joinToString(separator = "\n")
+            logView.text = currentRuntimeState.logs.joinToString(separator = "\n")
         }
     }
 
     private fun copyDebugLog() {
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         clipboard.setPrimaryClip(
-            ClipData.newPlainText("RaceChrono Bridge debug log", debugLog.snapshot().joinToString("\n")),
+            ClipData.newPlainText("RaceChrono Bridge debug log", currentRuntimeState.logs.joinToString("\n")),
         )
         appendLog("Debug log copied to clipboard.")
     }
@@ -1264,8 +1021,7 @@ class MainActivity : Activity() {
     companion object {
         private const val BLE_PERMISSION_REQUEST = 1001
         private const val CUSTOM_CHANNEL_FILE_REQUEST = 1002
-        private const val KEY_LAST_DEVICE_ADDRESS = "last_device_address"
-        private const val KEY_LAST_DEVICE_NAME = "last_device_name"
+        private const val NOTIFICATION_PERMISSION_REQUEST = 1003
         private const val KEY_CUSTOM_CHANNELS = "custom_channels"
         private const val CUSTOM_CHANNEL_SAMPLE =
             "slot,label,unit,address,bytes,scale,offset,mode,signed\n" +

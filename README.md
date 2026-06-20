@@ -12,8 +12,8 @@ Important: enable the RaceChrono DIY `RC2/RC3` API only. Do not enable `NMEA 018
 - BLE scan/connect for likely ELM327 adapters such as `Android-Vlink`, `V-LINK`, `vLink`, `Vgate`, and `iCar`.
 - Paired Bluetooth adapters are listed before scan results and are connected through Classic Bluetooth SPP first.
 - BLE serial characteristic discovery by write/notify capability instead of hard-coded UUIDs.
-- TCP server starts automatically when the app opens.
-- A `connectedDevice` foreground service keeps the bridge process alive while RaceChrono is foregrounded.
+- TCP server starts from a `connectedDevice` foreground service.
+- The foreground service owns Bluetooth connection, ELM327 initialization, SSM2 polling, RaceChrono TCP streaming, logs, and scan results so the bridge keeps running while RaceChrono is foregrounded.
 - The last successful Bluetooth adapter is saved and auto-selected on the next launch.
 - Bluetooth connection success automatically starts ELM327 initialization and SSM2 polling.
 - Per-channel `Off` / `Fast` / `Slow` settings are available in the app and are persisted locally.
@@ -38,19 +38,21 @@ Important: enable the RaceChrono DIY `RC2/RC3` API only. Do not enable `NMEA 018
 - Debug log display and clipboard copy.
 - Startup diagnostics show the previous Android process exit reason and any captured uncaught crash in the debug log.
 
+SSM2 value handling is aligned with public RomRaider Subaru logger definitions. Most byte values use the full `0..255` range: for example duty/position percentages intentionally allow `0xFF` as `100%`. Gear position is different because it is a discrete field; `0xFF` is treated as unknown/not available and is sent blank to RaceChrono instead of `256`.
+
 ## App Flow
 
 ### Offline RaceChrono test
 
 1. Open RaceChrono Bridge.
-2. Tap `Start fake telemetry`.
+2. Tap `Fake 5 Hz`.
 3. In RaceChrono, connect a RaceChrono DIY TCP/IP device to `127.0.0.1:9876`.
 4. Enable `RC2/RC3`; keep `NMEA 0183` off.
 
 ### iCar Pro 2S / SSM2 test
 
 1. Turn RaceChrono OBD-II reader off. The iCar Pro 2S should be connected only by this bridge app.
-2. Tap `Scan BLE devices`.
+2. Tap `Scan Bluetooth`.
 3. Select the iCar Pro 2S device from the `BLE devices` list. A `paired` device uses Classic Bluetooth SPP first, then falls back to BLE GATT if SPP fails.
 4. ELM327 initialization and SSM2 polling start automatically after Bluetooth connection succeeds.
 5. Leave the `RaceChrono Bridge running` notification active, then switch to RaceChrono.
@@ -182,7 +184,7 @@ When the app opens, check the debug log for `Previous Android exit` and `Last un
 | `REASON_USER_REQUESTED` or `REASON_USER_STOPPED` | The app was stopped from recents/settings or by a device power-management action. |
 | `Previous lifecycle before process exit: onStop` | The app had moved to the background before the process exited. |
 
-The app starts a `connectedDevice` foreground service before Bluetooth connection work so Android keeps the process active while RaceChrono is foregrounded. Android 13 and newer may hide the notification if notification permission is denied, but the foreground-service task remains visible in the system task manager.
+The app starts a `connectedDevice` foreground service before Bluetooth connection work so Android keeps the process active while RaceChrono is foregrounded. The service owns Bluetooth, SSM2 polling, and the local TCP server; the activity only renders UI and sends user commands. Android 13 and newer may hide the notification if notification permission is denied, but the foreground-service task remains visible in the system task manager.
 
 Android documents foreground service requirements, background execution limits, and BLE background communication here:
 
@@ -198,4 +200,4 @@ Android documents foreground service requirements, background execution limits, 
 - RC3 has a fixed number of output fields. Custom channels replace an existing `Digital` or `Analog` field; they do not add unlimited new RaceChrono channels.
 - Real car verification is still required for `E8 xx` response timing and polling rate.
 - RPM high/low are read as separate SSM2 requests, so fast RPM changes can produce a small mismatch.
-- The foreground service currently keeps the process alive, while the bridge runtime is still owned by the activity instance. The next reliability step is moving Bluetooth, polling, and TCP ownership fully into the service.
+- Some Android vendors apply aggressive battery restrictions even to foreground services. If the bridge is still killed, check `Previous Android exit` in the debug log and disable battery optimization for RaceChrono Bridge on that device.
