@@ -2,6 +2,9 @@
 /build/
 /app/build/
 /local.properties
+/release-keystore.properties
 /.idea/
 *.iml
+*.jks
+*.keystore
 .DS_Store

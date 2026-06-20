@@ -131,6 +131,27 @@ Debug APK:
 app/build/outputs/apk/debug/app-debug.apk
 ```
 
+Release signing:
+
+```sh
+export JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home
+scripts/create-release-keystore.sh
+./gradlew assembleRelease
+```
+
+Signed release APK:
+
+```text
+app/build/outputs/apk/release/app-release.apk
+```
+
+`scripts/create-release-keystore.sh` creates a private keystore under `~/.android/` and a local `release-keystore.properties` file. Both files are intentionally ignored by git. Back them up; Android app updates must be signed by the same key as the installed app.
+
+Important signing limit: a release-signed APK is still considered an app from an unknown source when it is installed outside Google Play or another trusted distribution channel. To avoid that user-facing unknown-app flow, distribute through Google Play internal testing, closed testing, or another managed/trusted store. Android's app-signing and unknown-app behavior are documented by Android Developers:
+
+- https://developer.android.com/studio/publish/app-signing
+- https://developer.android.com/distribute/marketing-tools/alternative-distribution
+
 ## Known Limits
 
 - Real iCar Pro 2S UUIDs have not been captured yet, so BLE uses discovery fallback by characteristic properties.
