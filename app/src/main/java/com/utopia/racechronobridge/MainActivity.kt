@@ -73,6 +73,7 @@ class MainActivity : Activity() {
 
     private lateinit var tcpServer: RaceChronoTcpServer
     private lateinit var telemetryView: TextView
+    private lateinit var eventView: TextView
     private lateinit var tcpStatusView: TextView
     private lateinit var bleStatusView: TextView
     private lateinit var elmStatusView: TextView
@@ -133,6 +134,7 @@ class MainActivity : Activity() {
             action?.invoke()
         } else {
             appendLog("BLE permissions were denied.")
+            showUserMessage("Bluetooth権限が拒否されました")
         }
     }
 
@@ -176,6 +178,8 @@ class MainActivity : Activity() {
         }
 
         root.addView(heroPanel())
+        eventView = eventBanner("Ready. Start Bluetooth scan or wait for auto-connect.")
+        root.addView(eventView)
 
         root.addView(sectionTitle("Status"))
         root.addView(
@@ -346,6 +350,17 @@ class MainActivity : Activity() {
                     setPadding(0, 4, 0, 0)
                 },
             )
+        }
+    }
+
+    private fun eventBanner(initialText: String): TextView {
+        return TextView(this).apply {
+            text = initialText
+            textSize = 13f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(COLOR_TEXT_PRIMARY)
+            setPadding(14.dp(), 12.dp(), 14.dp(), 12.dp())
+            background = roundedRect(COLOR_EVENT_SURFACE, radius = 16f.dpFloat(), strokeColor = COLOR_ACCENT_DIM)
         }
     }
 
@@ -797,12 +812,14 @@ class MainActivity : Activity() {
                     } else {
                         mainHandler.post {
                             bleStatusView.text = "connection failed"
+                            showUserMessage("Bluetooth接続に失敗しました")
                         }
                     }
                 } catch (error: Exception) {
                     appendLog("Bluetooth connection failed: ${error.message}")
                     mainHandler.post {
                         bleStatusView.text = "connection failed"
+                        showUserMessage("Bluetooth接続に失敗しました")
                     }
                 }
             }
@@ -838,6 +855,7 @@ class MainActivity : Activity() {
                 appendLog("ELM327 initialization failed: ${error.message}")
                 mainHandler.post {
                     elmStatusView.text = "initialization failed"
+                    showUserMessage("ELM327初期化に失敗しました")
                 }
             }
         }
@@ -1069,10 +1087,24 @@ class MainActivity : Activity() {
     }
 
     private fun showUserMessage(message: String) {
-        if (Looper.myLooper() == Looper.getMainLooper()) {
+        val update = {
+            if (::eventView.isInitialized) {
+                val error = message.contains("failed", ignoreCase = true) ||
+                    message.contains("失敗") ||
+                    message.contains("拒否")
+                eventView.text = message
+                eventView.background = roundedRect(
+                    if (error) COLOR_ERROR_SURFACE else COLOR_EVENT_SURFACE,
+                    radius = 16f.dpFloat(),
+                    strokeColor = if (error) COLOR_ERROR_BORDER else COLOR_ACCENT_DIM,
+                )
+            }
             Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+        }
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            update()
         } else {
-            mainHandler.post { Toast.makeText(this, message, Toast.LENGTH_SHORT).show() }
+            mainHandler.post { update() }
         }
     }
 
@@ -1142,6 +1174,9 @@ class MainActivity : Activity() {
         private val COLOR_ACCENT = Color.rgb(109, 255, 191)
         private val COLOR_ACCENT_DIM = Color.rgb(48, 122, 94)
         private val COLOR_ACCENT_WASH = Color.rgb(14, 45, 35)
+        private val COLOR_EVENT_SURFACE = Color.rgb(15, 37, 35)
+        private val COLOR_ERROR_SURFACE = Color.rgb(57, 22, 28)
+        private val COLOR_ERROR_BORDER = Color.rgb(169, 61, 72)
         private val COLOR_TEXT_PRIMARY = Color.rgb(237, 246, 244)
         private val COLOR_TEXT_SECONDARY = Color.rgb(156, 174, 181)
     }
