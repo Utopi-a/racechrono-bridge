@@ -10,6 +10,7 @@ class Ssm2Reader(
     fun readTelemetry(
         previous: SubaruTelemetry,
         channelModes: Map<TelemetryChannel, ChannelMode> = TelemetryChannel.defaultModes(),
+        customChannels: List<CustomTelemetryChannel> = emptyList(),
     ): SubaruTelemetry {
         var telemetry = previous.copy(timestampMillis = System.currentTimeMillis())
 
@@ -17,9 +18,16 @@ class Ssm2Reader(
             .filter { channel -> channelModes.modeFor(channel) == ChannelMode.FAST }
             .forEach { channel -> telemetry = readChannel(channel, telemetry) }
 
+        customChannels
+            .filter { channel -> channel.mode == ChannelMode.FAST }
+            .forEach { channel -> telemetry = readCustomChannel(channel, telemetry) }
+
         repeat(SLOW_READS_PER_CYCLE) {
-            val slowChannel = nextSlowChannel(channelModes) ?: return@repeat
-            telemetry = readChannel(slowChannel, telemetry)
+            val slowTarget = nextSlowTarget(channelModes, customChannels) ?: return@repeat
+            telemetry = when (slowTarget) {
+                is ReadTarget.BuiltIn -> readChannel(slowTarget.channel, telemetry)
+                is ReadTarget.Custom -> readCustomChannel(slowTarget.channel, telemetry)
+            }
         }
 
         return telemetry
@@ -94,6 +102,30 @@ class Ssm2Reader(
         return (elmSession.readByte(high) shl 8) + elmSession.readByte(low)
     }
 
+    private fun readCustomChannel(
+        channel: CustomTelemetryChannel,
+        telemetry: SubaruTelemetry,
+    ): SubaruTelemetry {
+        val rawValue = readCustomRawValue(channel)
+        val value = channel.convert(rawValue)
+        return telemetry.copy(customValues = telemetry.customValues + (channel.id to value))
+    }
+
+    private fun readCustomRawValue(channel: CustomTelemetryChannel): Int {
+        var rawValue = 0
+        repeat(channel.bytes) { byteOffset ->
+            rawValue = (rawValue shl 8) + elmSession.readByte(
+                command = channel.commandForByte(byteOffset),
+                label = "${channel.label}[$byteOffset]",
+            )
+        }
+        return if (channel.signed) {
+            rawValue.toSignedValue(bytes = channel.bytes)
+        } else {
+            rawValue
+        }
+    }
+
     private fun Int.toPercent(): Double = this * 100.0 / 255.0
 
     private fun Int.toTemperatureC(): Double = this - 40.0
@@ -102,16 +134,33 @@ class Ssm2Reader(
 
     private fun Int.toSignedHalfDegree(): Double = (this - 128.0) / 2.0
 
-    private fun nextSlowChannel(channelModes: Map<TelemetryChannel, ChannelMode>): TelemetryChannel? {
-        val slowChannels = SLOW_CHANNEL_ORDER.filter { channel ->
-            channelModes.modeFor(channel) == ChannelMode.SLOW
-        }
-        if (slowChannels.isEmpty()) {
+    private fun Int.toSignedValue(bytes: Int): Int {
+        val signBit = 1 shl (bytes * 8 - 1)
+        val valueRange = 1 shl (bytes * 8)
+        return if (this and signBit != 0) this - valueRange else this
+    }
+
+    private fun nextSlowTarget(
+        channelModes: Map<TelemetryChannel, ChannelMode>,
+        customChannels: List<CustomTelemetryChannel>,
+    ): ReadTarget? {
+        val slowTargets = SLOW_CHANNEL_ORDER
+            .filter { channel -> channelModes.modeFor(channel) == ChannelMode.SLOW }
+            .map { channel -> ReadTarget.BuiltIn(channel) } +
+            customChannels
+                .filter { channel -> channel.mode == ChannelMode.SLOW }
+                .map { channel -> ReadTarget.Custom(channel) }
+        if (slowTargets.isEmpty()) {
             return null
         }
-        val channel = slowChannels[nextSlowIndex % slowChannels.size]
-        nextSlowIndex = (nextSlowIndex + 1) % slowChannels.size
-        return channel
+        val target = slowTargets[nextSlowIndex % slowTargets.size]
+        nextSlowIndex = (nextSlowIndex + 1) % slowTargets.size
+        return target
+    }
+
+    private sealed class ReadTarget {
+        data class BuiltIn(val channel: TelemetryChannel) : ReadTarget()
+        data class Custom(val channel: CustomTelemetryChannel) : ReadTarget()
     }
 
     companion object {

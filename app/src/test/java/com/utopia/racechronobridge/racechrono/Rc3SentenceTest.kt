@@ -1,6 +1,7 @@
 package com.utopia.racechronobridge.racechrono
 
 import com.utopia.racechronobridge.ssm2.ChannelMode
+import com.utopia.racechronobridge.ssm2.CustomTelemetryChannel
 import com.utopia.racechronobridge.ssm2.SubaruTelemetry
 import com.utopia.racechronobridge.ssm2.TelemetryChannel
 import kotlin.test.Test
@@ -79,5 +80,34 @@ class Rc3SentenceTest {
         assertEquals("Digital 2", TelemetryChannel.GEAR.rc3Field)
         assertEquals("Analog 1", TelemetryChannel.BOOST.rc3Field)
         assertEquals("Analog 15", TelemetryChannel.ALTERNATOR_DUTY.rc3Field)
+    }
+
+    @Test
+    fun formatUsesCustomChannelForAssignedRaceChronoField() {
+        val customChannel = CustomTelemetryChannel(
+            id = "oil_temp",
+            rc3Field = "Analog 15",
+            label = "Oil temp",
+            unit = "C",
+            address = 0x000108,
+            bytes = 1,
+            scale = 1.0,
+            offset = -40.0,
+            mode = ChannelMode.SLOW,
+            signed = false,
+        )
+        val telemetry = SubaruTelemetry.EMPTY.copy(
+            alternatorDutyPercent = 60.0,
+            customValues = mapOf("oil_temp" to 112.0),
+        )
+
+        val sentence = rc3Sentence.format(
+            count = 2,
+            telemetry = telemetry,
+            customChannels = listOf(customChannel),
+        )
+
+        val fields = sentence.substringAfter("${'$'}").substringBefore("*").split(",")
+        assertEquals("112.000", fields[25])
     }
 }

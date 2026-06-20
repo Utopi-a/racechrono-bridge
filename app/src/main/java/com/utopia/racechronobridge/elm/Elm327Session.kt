@@ -21,13 +21,17 @@ class Elm327Session(
     }
 
     fun readByte(parameter: Ssm2Parameter): Int {
-        val raw = client.sendCommand(parameter.command)
-        onRawResponse("${parameter.command} -> ${raw.trim()}")
-        return when (val response = parser.parseSsm2Data(raw = raw, echoCommand = parameter.command)) {
+        return readByte(command = parameter.command, label = parameter.name)
+    }
+
+    fun readByte(command: String, label: String): Int {
+        val raw = client.sendCommand(command)
+        onRawResponse("$command -> ${raw.trim()}")
+        return when (val response = parser.parseSsm2Data(raw = raw, echoCommand = command)) {
             is ElmSsm2Response.Data -> response.dataBytes.firstOrNull()
                 ?: error("SSM2 response has no data byte: ${raw.trim()}")
 
-            is ElmSsm2Response.Error -> error("SSM2 ${parameter.name} failed: ${response.reason}")
+            is ElmSsm2Response.Error -> error("SSM2 $label failed: ${response.reason}")
         }
     }
 

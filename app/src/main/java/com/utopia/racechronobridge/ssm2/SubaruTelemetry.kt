@@ -63,6 +63,7 @@ data class SubaruTelemetry(
     val fuelPumpDutyPercent: Double,
     val alternatorDutyPercent: Double,
     val timestampMillis: Long,
+    val customValues: Map<String, Double> = emptyMap(),
 ) {
     companion object {
         val EMPTY = SubaruTelemetry(

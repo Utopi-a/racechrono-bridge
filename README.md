@@ -16,6 +16,7 @@ Important: enable the RaceChrono DIY `RC2/RC3` API only. Do not enable `NMEA 018
 - The last successful Bluetooth adapter is saved and auto-selected on the next launch.
 - Bluetooth connection success automatically starts ELM327 initialization and SSM2 polling.
 - Per-channel `Off` / `Fast` / `Slow` settings are available in the app and are persisted locally.
+- Custom SSM2 channels can be pasted as CSV or `key=value` text. A custom channel replaces one existing RC3 field such as `Analog 15`.
 - ELM327 initialization for SSM2 over CAN:
   - `ATZ`
   - `ATE0`
@@ -88,6 +89,21 @@ RaceChrono's RC3 data logger field names are fixed, so the app cannot rename `An
 | `a14` | Fuel pump duty % |
 | `a15` | Alternator duty % |
 
+Custom channel import format:
+
+```csv
+slot,label,unit,address,bytes,scale,offset,mode,signed
+Analog 15,Oil temp,C,0x000108,1,1,-40,Slow,false
+```
+
+Supported fields are `Digital 1/RPM`, `Digital 2`, and `Analog 1` through `Analog 15`. `address` can be an SSM2 address such as `0x000108` or a full command such as `A800000108`. `bytes` is `1` or `2`; two-byte channels read the selected address and the next address as a big-endian value. `mode` is `Off`, `Fast`, or `Slow`.
+
+The same row can also be pasted as key/value text:
+
+```text
+slot=Analog 15,label=Oil temp,unit=C,address=0x000108,bytes=1,scale=1,offset=-40,mode=Slow,signed=false
+```
+
 RaceChrono DIY RC3 format and checksum are based on the official RaceChrono DIY device documentation: https://racechrono.com/article/2572
 RaceChrono's forum notes that direct analog-channel renaming was not available for the simple RC3-style data logger channels: https://racechrono.com/forum/d/1689-1689
 
@@ -117,6 +133,7 @@ app/build/outputs/apk/debug/app-debug.apk
 
 - Real iCar Pro 2S UUIDs have not been captured yet, so BLE uses discovery fallback by characteristic properties.
 - RC3 does not carry custom channel metadata. A future BLE CAN-Bus style bridge could make RaceChrono-side custom channel naming possible, but this TCP RC3 bridge intentionally keeps the simple local stream.
+- RC3 has a fixed number of output fields. Custom channels replace an existing `Digital` or `Analog` field; they do not add unlimited new RaceChrono channels.
 - Real car verification is still required for `E8 xx` response timing and polling rate.
 - RPM high/low are read as separate SSM2 requests, so fast RPM changes can produce a small mismatch.
 - Keep the app foreground during recording; Android background BLE/network behavior is not handled yet.

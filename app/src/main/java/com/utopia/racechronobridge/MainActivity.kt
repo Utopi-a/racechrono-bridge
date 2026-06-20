@@ -16,8 +16,10 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.text.InputType
 import android.view.View
 import android.widget.Button
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -32,6 +34,8 @@ import com.utopia.racechronobridge.logging.DebugLog
 import com.utopia.racechronobridge.racechrono.RaceChronoTcpServer
 import com.utopia.racechronobridge.racechrono.Rc3Sentence
 import com.utopia.racechronobridge.ssm2.ChannelMode
+import com.utopia.racechronobridge.ssm2.CustomTelemetryChannel
+import com.utopia.racechronobridge.ssm2.CustomTelemetryChannelParser
 import com.utopia.racechronobridge.ssm2.FakeSubaruTelemetrySource
 import com.utopia.racechronobridge.ssm2.Ssm2Reader
 import com.utopia.racechronobridge.ssm2.SubaruTelemetry
@@ -51,6 +55,7 @@ class MainActivity : Activity() {
     private val rc3Sentence = Rc3Sentence()
     private val scanDevices = linkedMapOf<String, BleScanDevice>()
     private val channelModes = TelemetryChannel.defaultModes()
+    private val customChannels = mutableListOf<CustomTelemetryChannel>()
     private val preferences: SharedPreferences by lazy {
         getSharedPreferences("racechrono_bridge", Context.MODE_PRIVATE)
     }
@@ -72,12 +77,15 @@ class MainActivity : Activity() {
     private lateinit var elmStatusView: TextView
     private lateinit var pollingStatusView: TextView
     private lateinit var channelSettingsLayout: LinearLayout
+    private lateinit var customChannelInput: EditText
+    private lateinit var customChannelsLayout: LinearLayout
     private lateinit var devicesLayout: LinearLayout
     private lateinit var logView: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         loadChannelModes()
+        loadCustomChannels()
 
         tcpServer = RaceChronoTcpServer(
             onStatusChanged = { status ->
@@ -203,6 +211,52 @@ class MainActivity : Activity() {
         }
         root.addView(channelSettingsLayout)
         renderChannelSettings()
+
+        root.addView(sectionTitle("Custom SSM2 channels"))
+        root.addView(
+            TextView(this).apply {
+                text = "Paste CSV or key=value text from an LLM. Custom rows replace their selected RC3 field."
+                textSize = 13f
+                setTextColor(COLOR_TEXT_SECONDARY)
+                setPadding(0, 0, 0, 8)
+            },
+        )
+        customChannelInput = EditText(this).apply {
+            hint = CUSTOM_CHANNEL_SAMPLE
+            minLines = 4
+            maxLines = 8
+            textSize = 13f
+            typeface = Typeface.MONOSPACE
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            setTextColor(COLOR_TEXT_PRIMARY)
+            setHintTextColor(COLOR_TEXT_SECONDARY)
+            setPadding(18, 14, 18, 14)
+            background = roundedRect(COLOR_SURFACE, radius = 16f)
+        }
+        root.addView(customChannelInput)
+        root.addView(
+            LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                addView(
+                    compactButton("Paste", active = false) { pasteCustomChannelConfig() },
+                    LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
+                )
+                addView(
+                    compactButton("Import", active = true) { importCustomChannelsFromInput() },
+                    LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
+                )
+                addView(
+                    compactButton("Clear", active = false) { clearCustomChannels() },
+                    LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
+                )
+            },
+        )
+        customChannelsLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, 10, 0, 0)
+        }
+        root.addView(customChannelsLayout)
+        renderCustomChannels()
 
         root.addView(
             sectionTitle("Bluetooth devices"),
@@ -380,6 +434,7 @@ class MainActivity : Activity() {
         channelModes[channel] = mode
         preferences.edit().putString(channel.preferenceKey, mode.name).apply()
         renderChannelSettings()
+        renderTelemetry(lastTelemetry)
         appendLog("${channel.label} mode changed to ${mode.label}.")
     }
 
@@ -391,6 +446,161 @@ class MainActivity : Activity() {
                 channelModes[channel] = mode
             }
         }
+    }
+
+    private fun renderCustomChannels() {
+        if (!::customChannelsLayout.isInitialized) {
+            return
+        }
+        customChannelsLayout.removeAllViews()
+        if (customChannels.isEmpty()) {
+            customChannelsLayout.addView(
+                TextView(this).apply {
+                    text = "No custom channels imported."
+                    textSize = 13f
+                    setTextColor(COLOR_TEXT_SECONDARY)
+                    setPadding(0, 6, 0, 8)
+                },
+            )
+            return
+        }
+
+        customChannels.forEach { channel ->
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(18, 12, 18, 12)
+                background = roundedRect(COLOR_SURFACE, radius = 16f)
+            }
+            row.addView(
+                TextView(this).apply {
+                    text = "${channel.rc3Field} -> ${channel.mappingLabel}"
+                    textSize = 14f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(COLOR_TEXT_PRIMARY)
+                },
+            )
+            row.addView(
+                TextView(this).apply {
+                    text = "${channel.addressLabel} / ${channel.bytes} byte / value = raw * ${channel.scale} + ${channel.offset}"
+                    textSize = 12f
+                    setTextColor(COLOR_TEXT_SECONDARY)
+                    setPadding(0, 3, 0, 6)
+                },
+            )
+            row.addView(
+                LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    ChannelMode.entries.forEach { candidate ->
+                        addView(
+                            compactButton(candidate.label, active = channel.mode == candidate) {
+                                setCustomChannelMode(channel.id, candidate)
+                            },
+                            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
+                        )
+                    }
+                    addView(
+                        compactButton("Remove", active = false) { removeCustomChannel(channel.id) },
+                        LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
+                    )
+                },
+            )
+            customChannelsLayout.addView(
+                row,
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                ).apply {
+                    setMargins(0, 0, 0, 10)
+                },
+            )
+        }
+    }
+
+    private fun importCustomChannelsFromInput() {
+        val text = customChannelInput.text?.toString().orEmpty()
+        val result = CustomTelemetryChannelParser.parse(text)
+        if (result.channels.isEmpty()) {
+            appendLog("No custom channels imported.")
+            result.errors.forEach { error -> appendLog("Custom channel import error: $error") }
+            showUserMessage("No custom channels imported")
+            return
+        }
+
+        val byField = customChannels.associateBy { it.rc3Field }.toMutableMap()
+        result.channels.forEach { channel -> byField[channel.rc3Field] = channel }
+        customChannels.clear()
+        customChannels.addAll(TelemetryChannel.entries.mapNotNull { channel -> byField[channel.rc3Field] })
+        saveCustomChannels()
+        renderCustomChannels()
+        renderTelemetry(lastTelemetry)
+        result.errors.forEach { error -> appendLog("Custom channel import error: $error") }
+        appendLog("Imported ${result.channels.size} custom SSM2 channel(s).")
+        showUserMessage("Imported ${result.channels.size} custom channel(s)")
+    }
+
+    private fun pasteCustomChannelConfig() {
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val text = clipboard.primaryClip
+            ?.takeIf { it.itemCount > 0 }
+            ?.getItemAt(0)
+            ?.coerceToText(this)
+            ?.toString()
+        if (text.isNullOrBlank()) {
+            appendLog("Clipboard does not contain custom channel text.")
+            return
+        }
+        customChannelInput.setText(text)
+        customChannelInput.setSelection(customChannelInput.text.length)
+        appendLog("Pasted custom channel text from clipboard.")
+    }
+
+    private fun clearCustomChannels() {
+        customChannels.clear()
+        if (::customChannelInput.isInitialized) {
+            customChannelInput.text?.clear()
+        }
+        saveCustomChannels()
+        renderCustomChannels()
+        renderTelemetry(lastTelemetry)
+        appendLog("Custom SSM2 channels cleared.")
+        showUserMessage("Custom channels cleared")
+    }
+
+    private fun setCustomChannelMode(channelId: String, mode: ChannelMode) {
+        val index = customChannels.indexOfFirst { it.id == channelId }
+        if (index < 0) {
+            return
+        }
+        customChannels[index] = customChannels[index].copy(mode = mode)
+        saveCustomChannels()
+        renderCustomChannels()
+        renderTelemetry(lastTelemetry)
+        appendLog("${customChannels[index].label} mode changed to ${mode.label}.")
+    }
+
+    private fun removeCustomChannel(channelId: String) {
+        val removed = customChannels.firstOrNull { it.id == channelId } ?: return
+        customChannels.removeAll { it.id == channelId }
+        saveCustomChannels()
+        renderCustomChannels()
+        renderTelemetry(lastTelemetry)
+        appendLog("Removed custom channel: ${removed.label}.")
+    }
+
+    private fun loadCustomChannels() {
+        val text = preferences.getString(KEY_CUSTOM_CHANNELS, null).orEmpty()
+        if (text.isBlank()) {
+            return
+        }
+        val result = CustomTelemetryChannelParser.parse(text)
+        customChannels.clear()
+        customChannels.addAll(result.channels)
+    }
+
+    private fun saveCustomChannels() {
+        preferences.edit()
+            .putString(KEY_CUSTOM_CHANNELS, customChannels.joinToString(separator = "\n") { it.toConfigLine() })
+            .apply()
     }
 
     private fun connectBleDevice(scanDevice: BleScanDevice) {
@@ -409,7 +619,7 @@ class MainActivity : Activity() {
                         saveLastBluetoothDevice(scanDevice)
                         mainHandler.post {
                             bleStatusView.text = "Bluetooth: connected to ${scanDevice.name}"
-                            showUserMessage("Bluetooth connected: ${scanDevice.name}")
+                            showUserMessage("Bluetooth接続に成功しました: ${scanDevice.name}")
                             elmStatusView.text = "ELM327: not initialized"
                             initializeElm327(startPollingOnSuccess = true)
                         }
@@ -448,7 +658,7 @@ class MainActivity : Activity() {
                 ssm2Reader = Ssm2Reader(session)
                 mainHandler.post {
                     elmStatusView.text = "ELM327: initialized for SSM2"
-                    showUserMessage("ELM327 initialized")
+                    showUserMessage("ELM327初期化に成功しました")
                     if (startPollingOnSuccess) {
                         startRealTelemetry()
                     }
@@ -524,11 +734,11 @@ class MainActivity : Activity() {
         stopFakeTelemetry()
         appendLog("Starting SSM2 polling.")
         pollingStatusView.text = "Polling: SSM2 over CAN"
-        showUserMessage("SSM2 polling started")
+        showUserMessage("SSM2 pollingを開始しました")
         realPollingTask = pollExecutor.scheduleWithFixedDelay(
             {
                 try {
-                    publishTelemetry(reader.readTelemetry(lastTelemetry, channelModes))
+                    publishTelemetry(reader.readTelemetry(lastTelemetry, channelModes, customChannels))
                 } catch (error: Exception) {
                     appendLog("SSM2 polling failed: ${error.message}")
                 }
@@ -541,7 +751,12 @@ class MainActivity : Activity() {
 
     private fun publishTelemetry(telemetry: SubaruTelemetry) {
         lastTelemetry = telemetry
-        val sentence = rc3Sentence.format(count = rc3Count, telemetry = telemetry, channelModes = channelModes)
+        val sentence = rc3Sentence.format(
+            count = rc3Count,
+            telemetry = telemetry,
+            channelModes = channelModes,
+            customChannels = customChannels,
+        )
         rc3Count = (rc3Count + 1) and 0xFFFF
         tcpServer.send(sentence)
         mainHandler.post { renderTelemetry(telemetry) }
@@ -573,32 +788,48 @@ class MainActivity : Activity() {
     }
 
     private fun renderTelemetry(telemetry: SubaruTelemetry) {
-        telemetryView.text = listOf(
-            telemetryLine(TelemetryChannel.RPM, "%.0f rpm", telemetry.rpm),
-            telemetryLine(TelemetryChannel.BOOST, "%.1f kPa", telemetry.boostKpa),
-            telemetryLine(TelemetryChannel.COOLANT, "%.1f C", telemetry.coolantC),
-            telemetryLine(TelemetryChannel.THROTTLE, "%.1f %%", telemetry.throttlePercent),
-            telemetryLine(TelemetryChannel.ACCELERATOR, "%.1f %%", telemetry.acceleratorPercent),
-            telemetryLine(TelemetryChannel.PRIMARY_WGDC, "%.1f %%", telemetry.primaryWastegateDutyPercent),
-            telemetryLine(TelemetryChannel.VEHICLE_SPEED, "%.1f km/h", telemetry.vehicleSpeedKph),
-            telemetryLine(TelemetryChannel.GEAR, "%d", telemetry.gear),
-            telemetryLine(TelemetryChannel.INTAKE_AIR_TEMP, "%.1f C", telemetry.intakeAirTempC),
-            telemetryLine(TelemetryChannel.BATTERY_VOLTAGE, "%.2f V", telemetry.batteryVoltage),
-            telemetryLine(TelemetryChannel.MASS_AIRFLOW, "%.1f g/s", telemetry.massAirflowGps),
-            telemetryLine(TelemetryChannel.IGNITION_TIMING, "%.1f deg", telemetry.ignitionTimingDeg),
-            telemetryLine(TelemetryChannel.KNOCK_CORRECTION, "%.1f deg", telemetry.knockCorrectionDeg),
-            telemetryLine(TelemetryChannel.LEARNED_IGNITION, "%.1f deg", telemetry.learnedIgnitionTimingDeg),
-            telemetryLine(TelemetryChannel.INJECTOR_PULSE_WIDTH, "%.2f ms", telemetry.injectorPulseWidthMs),
-            telemetryLine(TelemetryChannel.FUEL_PUMP_DUTY, "%.1f %%", telemetry.fuelPumpDutyPercent),
-            telemetryLine(TelemetryChannel.ALTERNATOR_DUTY, "%.1f %%", telemetry.alternatorDutyPercent),
-        ).joinToString("\n")
+        val customByField = customChannels.associateBy { it.rc3Field }
+        telemetryView.text = TelemetryChannel.entries.joinToString("\n") { channel ->
+            customByField[channel.rc3Field]?.let { customChannel ->
+                customTelemetryLine(customChannel, telemetry)
+            } ?: telemetryLine(channel, telemetry)
+        }
     }
 
-    private fun telemetryLine(channel: TelemetryChannel, format: String, value: Number): String {
+    private fun telemetryLine(channel: TelemetryChannel, telemetry: SubaruTelemetry): String {
+        val formatAndValue = when (channel) {
+            TelemetryChannel.RPM -> "%.0f rpm" to telemetry.rpm
+            TelemetryChannel.GEAR -> "%d" to telemetry.gear
+            TelemetryChannel.BOOST -> "%.1f kPa" to telemetry.boostKpa
+            TelemetryChannel.COOLANT -> "%.1f C" to telemetry.coolantC
+            TelemetryChannel.THROTTLE -> "%.1f %%" to telemetry.throttlePercent
+            TelemetryChannel.ACCELERATOR -> "%.1f %%" to telemetry.acceleratorPercent
+            TelemetryChannel.PRIMARY_WGDC -> "%.1f %%" to telemetry.primaryWastegateDutyPercent
+            TelemetryChannel.VEHICLE_SPEED -> "%.1f km/h" to telemetry.vehicleSpeedKph
+            TelemetryChannel.INTAKE_AIR_TEMP -> "%.1f C" to telemetry.intakeAirTempC
+            TelemetryChannel.BATTERY_VOLTAGE -> "%.2f V" to telemetry.batteryVoltage
+            TelemetryChannel.MASS_AIRFLOW -> "%.1f g/s" to telemetry.massAirflowGps
+            TelemetryChannel.IGNITION_TIMING -> "%.1f deg" to telemetry.ignitionTimingDeg
+            TelemetryChannel.KNOCK_CORRECTION -> "%.1f deg" to telemetry.knockCorrectionDeg
+            TelemetryChannel.LEARNED_IGNITION -> "%.1f deg" to telemetry.learnedIgnitionTimingDeg
+            TelemetryChannel.INJECTOR_PULSE_WIDTH -> "%.2f ms" to telemetry.injectorPulseWidthMs
+            TelemetryChannel.FUEL_PUMP_DUTY -> "%.1f %%" to telemetry.fuelPumpDutyPercent
+            TelemetryChannel.ALTERNATOR_DUTY -> "%.1f %%" to telemetry.alternatorDutyPercent
+        }
         val renderedValue = if (channelModes.modeFor(channel) == ChannelMode.OFF) {
             "OFF"
         } else {
-            String.format(Locale.US, format, value)
+            String.format(Locale.US, formatAndValue.first, formatAndValue.second)
+        }
+        return "${channel.rc3Field.padEnd(13)} ${channel.label.padEnd(16)} $renderedValue"
+    }
+
+    private fun customTelemetryLine(channel: CustomTelemetryChannel, telemetry: SubaruTelemetry): String {
+        val renderedValue = if (channel.mode == ChannelMode.OFF) {
+            "OFF"
+        } else {
+            val value = telemetry.customValues[channel.id]
+            if (value == null) "-" else String.format(Locale.US, "%.3f %s", value, channel.unit).trim()
         }
         return "${channel.rc3Field.padEnd(13)} ${channel.label.padEnd(16)} $renderedValue"
     }
@@ -694,18 +925,32 @@ class MainActivity : Activity() {
     }
 
     private fun copyRaceChronoMapping() {
-        val mapping = TelemetryChannel.entries.joinToString(separator = "\n") { channel ->
-            "${channel.rc3Field}: ${channel.mappingLabel}"
-        }
+        val mapping = raceChronoMappingLines().joinToString(separator = "\n")
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         clipboard.setPrimaryClip(ClipData.newPlainText("RaceChrono Bridge channel mapping", mapping))
         appendLog("RaceChrono channel mapping copied to clipboard.")
+    }
+
+    private fun raceChronoMappingLines(): List<String> {
+        val customByField = customChannels.associateBy { it.rc3Field }
+        return TelemetryChannel.entries.map { channel ->
+            val customChannel = customByField[channel.rc3Field]
+            if (customChannel == null) {
+                "${channel.rc3Field}: ${channel.mappingLabel}"
+            } else {
+                "${customChannel.rc3Field}: ${customChannel.mappingLabel} (custom ${customChannel.addressLabel})"
+            }
+        }
     }
 
     companion object {
         private const val BLE_PERMISSION_REQUEST = 1001
         private const val KEY_LAST_DEVICE_ADDRESS = "last_device_address"
         private const val KEY_LAST_DEVICE_NAME = "last_device_name"
+        private const val KEY_CUSTOM_CHANNELS = "custom_channels"
+        private const val CUSTOM_CHANNEL_SAMPLE =
+            "slot,label,unit,address,bytes,scale,offset,mode,signed\n" +
+                "Analog 15,Oil temp,C,0x000108,1,1,-40,Slow,false"
         private val COLOR_BACKGROUND = Color.rgb(7, 12, 17)
         private val COLOR_SURFACE = Color.rgb(18, 29, 38)
         private val COLOR_SURFACE_ALT = Color.rgb(31, 45, 56)
