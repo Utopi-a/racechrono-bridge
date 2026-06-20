@@ -91,17 +91,16 @@ class MainActivity : Activity() {
         tcpServer = RaceChronoTcpServer(
             onStatusChanged = { status ->
                 mainHandler.post {
-                    tcpStatusView.text = "TCP: ${status.host}:${status.port} / " +
-                        "server=${if (status.running) "running" else "stopped"} / " +
-                        "client=${if (status.clientConnected) "connected" else "not connected"}"
+                    tcpStatusView.text = "${status.host}:${status.port}\n" +
+                        "${if (status.running) "server running" else "server stopped"} / " +
+                        if (status.clientConnected) "client connected" else "no client"
                 }
             },
             onLog = ::appendLog,
         )
 
         setContentView(buildContentView())
-        tcpStatusView.text = "TCP: ${RaceChronoTcpServer.HOST}:${RaceChronoTcpServer.PORT} / " +
-            "server=stopped / client=not connected"
+        tcpStatusView.text = "${RaceChronoTcpServer.HOST}:${RaceChronoTcpServer.PORT}\nserver stopped / no client"
         renderTelemetry(SubaruTelemetry.EMPTY)
         refreshLog()
         appendLog("App ready. In RaceChrono, enable RC2/RC3 only. Do not enable NMEA 0183.")
@@ -172,63 +171,72 @@ class MainActivity : Activity() {
     private fun buildContentView(): View {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(32, 32, 32, 32)
+            setPadding(20.dp(), 20.dp(), 20.dp(), 20.dp())
             setBackgroundColor(COLOR_BACKGROUND)
         }
 
-        val title = TextView(this).apply {
-            text = "RaceChrono Bridge"
-            textSize = 24f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(COLOR_TEXT_PRIMARY)
-        }
-        root.addView(title)
+        root.addView(heroPanel())
 
-        tcpStatusView = statusText()
-        root.addView(tcpStatusView)
-
-        bleStatusView = statusText("Bluetooth: disconnected")
-        root.addView(bleStatusView)
-
-        elmStatusView = statusText("ELM327: not initialized")
-        root.addView(elmStatusView)
-
-        pollingStatusView = statusText("Polling: stopped")
-        root.addView(pollingStatusView)
-
-        telemetryView = TextView(this).apply {
-            textSize = 20f
-            typeface = Typeface.MONOSPACE
-            setTextColor(COLOR_TEXT_PRIMARY)
-            setPadding(0, 24, 0, 24)
-        }
-        root.addView(telemetryView)
-
-        val controls = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-        }
-        root.addView(controls)
-
-        controls.addView(button("Start TCP server") { tcpServer.start() })
-        controls.addView(button("Stop TCP server") { tcpServer.stop() })
-        controls.addView(button("Start fake telemetry") { startFakeTelemetry() })
-        controls.addView(button("Scan Bluetooth devices") { startBleScan() })
-        controls.addView(button("Stop Bluetooth scan") { bleScanner?.stop() })
-        controls.addView(button("Initialize ELM327") { initializeElm327() })
-        controls.addView(button("Start SSM2 polling") { startRealTelemetry() })
-        controls.addView(button("Stop telemetry") { stopTelemetry() })
-        controls.addView(button("Copy RaceChrono mapping") { copyRaceChronoMapping() })
-        controls.addView(button("Copy debug log") { copyDebugLog() })
-
+        root.addView(sectionTitle("Status"))
         root.addView(
-            TextView(this).apply {
-                text = "RaceChrono: DIY > TCP/IP > RC2/RC3 ON, NMEA 0183 OFF, 127.0.0.1:9876"
-                textSize = 14f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(COLOR_ACCENT)
-                setPadding(0, 16, 0, 8)
+            LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                val tcpCard = statusCard(
+                    "TCP",
+                    "${RaceChronoTcpServer.HOST}:${RaceChronoTcpServer.PORT}\nserver stopped",
+                )
+                tcpStatusView = tcpCard.valueView
+                addView(tcpCard.view, weightedCellParams(left = true))
+
+                val bleCard = statusCard("Bluetooth", "disconnected")
+                bleStatusView = bleCard.valueView
+                addView(bleCard.view, weightedCellParams(left = false))
             },
         )
+        root.addView(
+            LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                val elmCard = statusCard("ELM327", "not initialized")
+                elmStatusView = elmCard.valueView
+                addView(elmCard.view, weightedCellParams(left = true))
+
+                val pollingCard = statusCard("Polling", "stopped")
+                pollingStatusView = pollingCard.valueView
+                addView(pollingCard.view, weightedCellParams(left = false))
+            },
+        )
+
+        root.addView(sectionTitle("Actions"))
+        root.addView(
+            actionGrid(
+                listOf(
+                    ActionSpec("Scan Bluetooth") { startBleScan() },
+                    ActionSpec("Initialize ELM327") { initializeElm327() },
+                    ActionSpec("Start SSM2") { startRealTelemetry() },
+                    ActionSpec("Stop telemetry") { stopTelemetry() },
+                    ActionSpec("Fake 5 Hz") { startFakeTelemetry() },
+                    ActionSpec("Stop scan") { bleScanner?.stop() },
+                    ActionSpec("Start TCP") { tcpServer.start() },
+                    ActionSpec("Stop TCP") { tcpServer.stop() },
+                    ActionSpec("Copy mapping") { copyRaceChronoMapping() },
+                    ActionSpec("Copy log") { copyDebugLog() },
+                ),
+            ),
+        )
+
+        root.addView(
+            infoStrip("RaceChrono DIY TCP/IP  ${RaceChronoTcpServer.HOST}:${RaceChronoTcpServer.PORT}   RC2/RC3 ON   NMEA OFF"),
+        )
+
+        telemetryView = TextView(this).apply {
+            textSize = 15f
+            typeface = Typeface.MONOSPACE
+            setTextColor(COLOR_TEXT_PRIMARY)
+            setLineSpacing(0f, 1.08f)
+            setPadding(18, 16, 18, 16)
+        }
+        root.addView(sectionTitle("Live telemetry"))
+        root.addView(telemetryPanel())
 
         root.addView(sectionTitle("Channels"))
         root.addView(
@@ -317,12 +325,102 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun statusText(initialText: String = ""): TextView {
+    private fun heroPanel(): View {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(18.dp(), 18.dp(), 18.dp(), 18.dp())
+            background = roundedRect(COLOR_SURFACE, radius = 18f.dpFloat(), strokeColor = COLOR_SURFACE_BORDER)
+            addView(
+                TextView(context).apply {
+                    text = "RaceChrono Bridge"
+                    textSize = 27f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(COLOR_TEXT_PRIMARY)
+                },
+            )
+            addView(
+                TextView(context).apply {
+                    text = "Subaru SSM2 over CAN -> RC3 TCP"
+                    textSize = 14f
+                    setTextColor(COLOR_TEXT_SECONDARY)
+                    setPadding(0, 4, 0, 0)
+                },
+            )
+        }
+    }
+
+    private fun statusCard(label: String, initialValue: String): StatusCard {
+        val valueView = TextView(this).apply {
+            text = initialValue
+            textSize = 13f
+            setTextColor(COLOR_TEXT_PRIMARY)
+            setPadding(0, 5.dp(), 0, 0)
+        }
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(14.dp(), 12.dp(), 14.dp(), 12.dp())
+            background = roundedRect(COLOR_SURFACE, radius = 16f.dpFloat(), strokeColor = COLOR_SURFACE_BORDER)
+            addView(
+                TextView(context).apply {
+                    text = label
+                    textSize = 11f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(COLOR_ACCENT)
+                },
+            )
+            addView(valueView)
+        }
+        return StatusCard(view = card, valueView = valueView)
+    }
+
+    private fun weightedCellParams(left: Boolean): LinearLayout.LayoutParams {
+        return LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+            if (left) {
+                setMargins(0, 0, 6.dp(), 10.dp())
+            } else {
+                setMargins(6.dp(), 0, 0, 10.dp())
+            }
+        }
+    }
+
+    private fun actionGrid(actions: List<ActionSpec>): View {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            actions.chunked(2).forEach { rowActions ->
+                addView(
+                    LinearLayout(context).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        rowActions.forEachIndexed { index, action ->
+                            addView(
+                                button(action.label, action.onClick),
+                                weightedCellParams(left = index == 0),
+                            )
+                        }
+                        if (rowActions.size == 1) {
+                            addView(View(context), weightedCellParams(left = false))
+                        }
+                    },
+                )
+            }
+        }
+    }
+
+    private fun infoStrip(text: String): TextView {
         return TextView(this).apply {
-            text = initialText
-            textSize = 14f
-            setTextColor(COLOR_TEXT_SECONDARY)
-            setPadding(0, 8, 0, 0)
+            this.text = text
+            textSize = 12f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(COLOR_ACCENT)
+            setPadding(14.dp(), 12.dp(), 14.dp(), 12.dp())
+            background = roundedRect(COLOR_ACCENT_WASH, radius = 16f.dpFloat(), strokeColor = COLOR_ACCENT_DIM)
+        }
+    }
+
+    private fun telemetryPanel(): View {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = roundedRect(COLOR_TELEMETRY_SURFACE, radius = 16f.dpFloat(), strokeColor = COLOR_SURFACE_BORDER)
+            addView(telemetryView)
         }
     }
 
@@ -331,7 +429,10 @@ class MainActivity : Activity() {
             text = label
             isAllCaps = false
             setTextColor(Color.WHITE)
-            background = roundedRect(COLOR_BUTTON, radius = 18f)
+            minHeight = 0
+            minimumHeight = 0
+            setPadding(10.dp(), 11.dp(), 10.dp(), 11.dp())
+            background = roundedRect(COLOR_BUTTON, radius = 14f.dpFloat())
             setOnClickListener { onClick() }
         }
     }
@@ -343,9 +444,9 @@ class MainActivity : Activity() {
             textSize = 12f
             minHeight = 0
             minimumHeight = 0
-            setPadding(12, 4, 12, 4)
+            setPadding(10.dp(), 5.dp(), 10.dp(), 5.dp())
             setTextColor(if (active) Color.BLACK else COLOR_TEXT_SECONDARY)
-            background = roundedRect(if (active) COLOR_ACCENT else COLOR_SURFACE_ALT, radius = 18f)
+            background = roundedRect(if (active) COLOR_ACCENT else COLOR_SURFACE_ALT, radius = 14f.dpFloat())
             setOnClickListener { onClick() }
         }
     }
@@ -356,16 +457,27 @@ class MainActivity : Activity() {
             textSize = 18f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(COLOR_TEXT_PRIMARY)
-            setPadding(0, 24, 0, 8)
+            setPadding(0, 22.dp(), 0, 8.dp())
         }
     }
 
-    private fun roundedRect(color: Int, radius: Float): GradientDrawable {
+    private fun roundedRect(
+        color: Int,
+        radius: Float,
+        strokeColor: Int? = null,
+    ): GradientDrawable {
         return GradientDrawable().apply {
             setColor(color)
             cornerRadius = radius
+            if (strokeColor != null) {
+                setStroke(1, strokeColor)
+            }
         }
     }
+
+    private fun Int.dp(): Int = (this * resources.displayMetrics.density).toInt()
+
+    private fun Float.dpFloat(): Float = this * resources.displayMetrics.density
 
     private fun startBleScan() {
         ensureBlePermissions {
@@ -392,9 +504,9 @@ class MainActivity : Activity() {
             onScanStateChanged = { scanning ->
                 mainHandler.post {
                     bleStatusView.text = if (scanning) {
-                        "Bluetooth: scanning"
+                        "scanning"
                     } else {
-                        "Bluetooth: scan stopped"
+                        "scan stopped"
                     }
                 }
             },
@@ -665,7 +777,7 @@ class MainActivity : Activity() {
     private fun connectBleDevice(scanDevice: BleScanDevice) {
         ensureBlePermissions {
             bleScanner?.stop()
-            bleStatusView.text = "Bluetooth: connecting to ${scanDevice.name}"
+            bleStatusView.text = "connecting\n${scanDevice.name}"
             appendLog("Connecting Bluetooth device: ${scanDevice.name} ${scanDevice.address}")
             pollExecutor.execute {
                 try {
@@ -677,20 +789,20 @@ class MainActivity : Activity() {
                         elmTransport = transport
                         saveLastBluetoothDevice(scanDevice)
                         mainHandler.post {
-                            bleStatusView.text = "Bluetooth: connected to ${scanDevice.name}"
+                            bleStatusView.text = "connected\n${scanDevice.name}"
                             showUserMessage("Bluetooth接続に成功しました: ${scanDevice.name}")
-                            elmStatusView.text = "ELM327: not initialized"
+                            elmStatusView.text = "not initialized"
                             initializeElm327(startPollingOnSuccess = true)
                         }
                     } else {
                         mainHandler.post {
-                            bleStatusView.text = "Bluetooth: connection failed"
+                            bleStatusView.text = "connection failed"
                         }
                     }
                 } catch (error: Exception) {
                     appendLog("Bluetooth connection failed: ${error.message}")
                     mainHandler.post {
-                        bleStatusView.text = "Bluetooth: connection failed"
+                        bleStatusView.text = "connection failed"
                     }
                 }
             }
@@ -704,7 +816,7 @@ class MainActivity : Activity() {
             return
         }
 
-        elmStatusView.text = "ELM327: initializing"
+        elmStatusView.text = "initializing"
         pollExecutor.execute {
             try {
                 val session = Elm327Session(
@@ -716,7 +828,7 @@ class MainActivity : Activity() {
                 elmSession = session
                 ssm2Reader = Ssm2Reader(session)
                 mainHandler.post {
-                    elmStatusView.text = "ELM327: initialized for SSM2"
+                    elmStatusView.text = "initialized for SSM2"
                     showUserMessage("ELM327初期化に成功しました")
                     if (startPollingOnSuccess) {
                         startRealTelemetry()
@@ -725,7 +837,7 @@ class MainActivity : Activity() {
             } catch (error: Exception) {
                 appendLog("ELM327 initialization failed: ${error.message}")
                 mainHandler.post {
-                    elmStatusView.text = "ELM327: initialization failed"
+                    elmStatusView.text = "initialization failed"
                 }
             }
         }
@@ -767,7 +879,7 @@ class MainActivity : Activity() {
 
         stopRealTelemetry()
         appendLog("Starting fake telemetry at 5 Hz.")
-        pollingStatusView.text = "Polling: fake telemetry at 5 Hz"
+        pollingStatusView.text = "fake telemetry\n5 Hz"
         fakePollingTask = pollExecutor.scheduleAtFixedRate(
             {
                 val telemetry = fakeTelemetrySource.next()
@@ -792,7 +904,7 @@ class MainActivity : Activity() {
 
         stopFakeTelemetry()
         appendLog("Starting SSM2 polling.")
-        pollingStatusView.text = "Polling: SSM2 over CAN"
+        pollingStatusView.text = "SSM2 over CAN"
         showUserMessage("SSM2 pollingを開始しました")
         realPollingTask = pollExecutor.scheduleWithFixedDelay(
             {
@@ -831,7 +943,7 @@ class MainActivity : Activity() {
         task.cancel(true)
         fakePollingTask = null
         if (::pollingStatusView.isInitialized) {
-            pollingStatusView.text = "Polling: stopped"
+            pollingStatusView.text = "stopped"
         }
         appendLog("Fake telemetry stopped.")
     }
@@ -841,7 +953,7 @@ class MainActivity : Activity() {
         task.cancel(true)
         realPollingTask = null
         if (::pollingStatusView.isInitialized) {
-            pollingStatusView.text = "Polling: stopped"
+            pollingStatusView.text = "stopped"
         }
         appendLog("SSM2 polling stopped.")
     }
@@ -1002,6 +1114,16 @@ class MainActivity : Activity() {
         }
     }
 
+    private data class ActionSpec(
+        val label: String,
+        val onClick: () -> Unit,
+    )
+
+    private data class StatusCard(
+        val view: View,
+        val valueView: TextView,
+    )
+
     companion object {
         private const val BLE_PERMISSION_REQUEST = 1001
         private const val CUSTOM_CHANNEL_FILE_REQUEST = 1002
@@ -1013,9 +1135,13 @@ class MainActivity : Activity() {
                 "Analog 15,Oil temp,C,0x000108,1,1,-40,Slow,false"
         private val COLOR_BACKGROUND = Color.rgb(7, 12, 17)
         private val COLOR_SURFACE = Color.rgb(18, 29, 38)
+        private val COLOR_TELEMETRY_SURFACE = Color.rgb(10, 19, 24)
         private val COLOR_SURFACE_ALT = Color.rgb(31, 45, 56)
+        private val COLOR_SURFACE_BORDER = Color.rgb(45, 68, 82)
         private val COLOR_BUTTON = Color.rgb(36, 57, 72)
         private val COLOR_ACCENT = Color.rgb(109, 255, 191)
+        private val COLOR_ACCENT_DIM = Color.rgb(48, 122, 94)
+        private val COLOR_ACCENT_WASH = Color.rgb(14, 45, 35)
         private val COLOR_TEXT_PRIMARY = Color.rgb(237, 246, 244)
         private val COLOR_TEXT_SECONDARY = Color.rgb(156, 174, 181)
     }
