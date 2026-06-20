@@ -19,6 +19,7 @@ import android.os.Handler
 import android.os.Looper
 import android.text.InputType
 import android.view.View
+import android.view.WindowManager
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
@@ -29,6 +30,7 @@ import com.utopia.racechronobridge.ble.BleDeviceScanner
 import com.utopia.racechronobridge.ble.BleElmClient
 import com.utopia.racechronobridge.ble.BleScanDevice
 import com.utopia.racechronobridge.bluetooth.ClassicBluetoothElmClient
+import com.utopia.racechronobridge.diagnostics.AppExitDiagnostics
 import com.utopia.racechronobridge.elm.Elm327Session
 import com.utopia.racechronobridge.elm.Elm327Transport
 import com.utopia.racechronobridge.logging.DebugLog
@@ -87,6 +89,10 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        AppExitDiagnostics.install(this)
+        val startupDiagnostics = AppExitDiagnostics.startupMessages(this)
+        AppExitDiagnostics.recordLifecycle(this, "onCreate")
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         loadChannelModes()
         loadCustomChannels()
 
@@ -105,12 +111,29 @@ class MainActivity : Activity() {
         tcpStatusView.text = "${RaceChronoTcpServer.HOST}:${RaceChronoTcpServer.PORT}\nserver stopped / no client"
         renderTelemetry(SubaruTelemetry.EMPTY)
         refreshLog()
+        startupDiagnostics.forEach(::appendLog)
         appendLog("App ready. In RaceChrono, enable RC2/RC3 only. Do not enable NMEA 0183.")
         tcpServer.start()
         attemptAutoConnectLastDevice()
     }
 
+    override fun onResume() {
+        super.onResume()
+        AppExitDiagnostics.recordLifecycle(this, "onResume")
+    }
+
+    override fun onPause() {
+        AppExitDiagnostics.recordLifecycle(this, "onPause")
+        super.onPause()
+    }
+
+    override fun onStop() {
+        AppExitDiagnostics.recordLifecycle(this, "onStop")
+        super.onStop()
+    }
+
     override fun onDestroy() {
+        AppExitDiagnostics.recordLifecycle(this, "onDestroy")
         stopTelemetry()
         bleScanner?.stop()
         elmTransport?.close()

@@ -34,6 +34,7 @@ Important: enable the RaceChrono DIY `RC2/RC3` API only. Do not enable `NMEA 018
   - `coolantC = coolantRaw - 40.0`
   - throttle %, accelerator %, primary WGDC %, vehicle speed, gear, intake air temperature, battery voltage, mass airflow, ignition timing, knock correction, learned ignition timing, injector pulse width, fuel pump duty, alternator duty
 - Debug log display and clipboard copy.
+- Startup diagnostics show the previous Android process exit reason and any captured uncaught crash in the debug log.
 
 ## App Flow
 
@@ -166,6 +167,24 @@ Important signing limit: a release-signed APK is still considered an app from an
 - https://developer.android.com/studio/publish/app-signing
 - https://developer.android.com/distribute/marketing-tools/alternative-distribution
 
+## Troubleshooting App Exits
+
+When the app opens, check the debug log for `Previous Android exit` and `Last uncaught crash`.
+
+| Log value | Likely meaning |
+|---|---|
+| `REASON_CRASH` or `Last uncaught crash` | App bug or uncaught exception. Copy the debug log after reopening the app. |
+| `REASON_ANR` | The app stopped responding. Copy the debug log and note what action was happening. |
+| `REASON_LOW_MEMORY` or `REASON_EXCESSIVE_RESOURCE_USAGE` | Android killed the process under resource pressure. |
+| `REASON_USER_REQUESTED` or `REASON_USER_STOPPED` | The app was stopped from recents/settings or by a device power-management action. |
+| `Previous lifecycle before process exit: onStop` | The app had moved to the background before the process exited. |
+
+The app currently keeps the screen awake while the activity is visible, but it is still an activity-based MVP. For reliable recording while the screen is off or another app is foregrounded, the polling/TCP bridge should move to a notification-backed Android foreground service. Android documents background execution limits and BLE background communication here:
+
+- https://developer.android.com/about/versions/oreo/background
+- https://developer.android.com/develop/connectivity/bluetooth/ble/background
+- https://developer.android.com/topic/performance/vitals/anr
+
 ## Known Limits
 
 - Real iCar Pro 2S UUIDs have not been captured yet, so BLE uses discovery fallback by characteristic properties.
@@ -173,4 +192,4 @@ Important signing limit: a release-signed APK is still considered an app from an
 - RC3 has a fixed number of output fields. Custom channels replace an existing `Digital` or `Analog` field; they do not add unlimited new RaceChrono channels.
 - Real car verification is still required for `E8 xx` response timing and polling rate.
 - RPM high/low are read as separate SSM2 requests, so fast RPM changes can produce a small mismatch.
-- Keep the app foreground during recording; Android background BLE/network behavior is not handled yet.
+- Keep the app foreground during recording; Android background BLE/network behavior is not handled by a foreground service yet.
