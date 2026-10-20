@@ -35,15 +35,22 @@ import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 
+enum class StepState { IDLE, WORKING, OK, FAILED }
+
+data class StepStatus(
+    val state: StepState,
+    val detail: String,
+)
+
 data class BridgeRuntimeState(
     val tcpStatus: RaceChronoTcpStatus = RaceChronoTcpStatus(running = false, clientConnected = false),
-    val bleStatus: String = "disconnected",
-    val elmStatus: String = "not initialized",
-    val pollingStatus: String = "stopped",
+    val adapter: StepStatus = StepStatus(StepState.IDLE, "未接続"),
+    val scanning: Boolean = false,
+    val ecu: StepStatus = StepStatus(StepState.IDLE, "アダプタの接続待ち"),
     val scanDevices: List<BleScanDevice> = emptyList(),
     val telemetry: SubaruTelemetry = SubaruTelemetry.EMPTY,
     val logs: List<String> = emptyList(),
-    val canCaptureStatus: String = "stopped",
+    val capture: StepStatus = StepStatus(StepState.IDLE, "停止中"),
     val canCaptureFile: File? = null,
 )
 
@@ -139,7 +146,7 @@ class BridgeRuntime(
                 publishScanDevices()
             },
             onScanStateChanged = { scanning ->
-                updateState { copy(bleStatus = if (scanning) "scanning" else "scan stopped") }
+                updateState { copy(scanning = scanning) }
             },
             onLog = ::appendLog,
         )
@@ -156,7 +163,7 @@ class BridgeRuntime(
         stopBleScan()
         stopCanCapture()
         stopTelemetry()
-        updateState { copy(bleStatus = "connecting\n${scanDevice.name}") }
+        updateState { copy(adapter = StepStatus(StepState.WORKING, "${scanDevice.name} に接続中")) }
         appendLog("Connecting Bluetooth device: ${scanDevice.name} ${scanDevice.address}")
         pollExecutor.execute {
             try {
@@ -167,20 +174,15 @@ class BridgeRuntime(
                 if (transport != null) {
                     elmTransport = transport
                     saveLastBluetoothDevice(scanDevice)
-                    updateState {
-                        copy(
-                            bleStatus = "connected\n${scanDevice.name}",
-                            elmStatus = "not initialized",
-                        )
-                    }
+                    updateState { copy(adapter = StepStatus(StepState.OK, scanDevice.name)) }
                     appendLog("Bluetooth connected: ${scanDevice.name}")
                     initializeElm327(startPollingOnSuccess = true)
                 } else {
-                    updateState { copy(bleStatus = "connection failed") }
+                    updateState { copy(adapter = StepStatus(StepState.FAILED, "接続できませんでした")) }
                     appendLog("Bluetooth connection failed.")
                 }
             } catch (error: Exception) {
-                updateState { copy(bleStatus = "connection failed") }
+                updateState { copy(adapter = StepStatus(StepState.FAILED, "接続できませんでした")) }
                 appendLog("Bluetooth connection failed: ${error.message}")
             }
         }
@@ -193,7 +195,7 @@ class BridgeRuntime(
             return
         }
 
-        updateState { copy(elmStatus = "initializing") }
+        updateState { copy(ecu = StepStatus(StepState.WORKING, "ELM327 を初期化中")) }
         pollExecutor.execute {
             try {
                 val session = Elm327Session(
@@ -204,12 +206,12 @@ class BridgeRuntime(
                 session.initialize()
                 elmSession = session
                 ssm2Reader = Ssm2Reader(session)
-                updateState { copy(elmStatus = "initialized for SSM2") }
+                updateState { copy(ecu = StepStatus(StepState.WORKING, "初期化済み・受信待ち")) }
                 if (startPollingOnSuccess) {
                     startRealTelemetry()
                 }
             } catch (error: Exception) {
-                updateState { copy(elmStatus = "initialization failed") }
+                updateState { copy(ecu = StepStatus(StepState.FAILED, "ELM327 の初期化に失敗")) }
                 appendLog("ELM327 initialization failed: ${error.message}")
             }
         }
@@ -239,19 +241,25 @@ class BridgeRuntime(
             transport = transport,
             writer = writer,
             onLog = ::appendLog,
-            onProgress = { progress -> updateState { copy(canCaptureStatus = progress.summary()) } },
+            onProgress = { progress -> updateState { copy(capture = StepStatus(StepState.WORKING, progress.summary())) } },
         )
         canCaptureWriter = writer
         canCaptureSession = session
-        updateState { copy(canCaptureStatus = "starting", canCaptureFile = file, elmStatus = "CAN capture") }
+        updateState {
+            copy(
+                capture = StepStatus(StepState.WORKING, "開始中"),
+                canCaptureFile = file,
+                ecu = StepStatus(StepState.IDLE, "CAN 記録中は SSM2 を止めています"),
+            )
+        }
         appendLog("CAN capture file: ${file.absolutePath}")
 
         pollExecutor.execute {
             try {
                 session.run()
-                updateState { copy(canCaptureStatus = "saved\n${file.name}") }
+                updateState { copy(capture = StepStatus(StepState.OK, "保存済み ${file.name}")) }
             } catch (error: Exception) {
-                updateState { copy(canCaptureStatus = "failed\n${error.message}") }
+                updateState { copy(capture = StepStatus(StepState.FAILED, "失敗: ${error.message}")) }
                 appendLog("CAN capture failed: ${error.message}")
             } finally {
                 writer.close()
@@ -287,7 +295,7 @@ class BridgeRuntime(
 
         stopRealTelemetry()
         appendLog("Starting fake telemetry at 5 Hz.")
-        updateState { copy(pollingStatus = "fake telemetry\n5 Hz") }
+        updateState { copy(ecu = StepStatus(StepState.OK, "テストデータを送信中 (5 Hz)")) }
         fakePollingTask = pollExecutor.scheduleAtFixedRate(
             {
                 val telemetry = fakeTelemetrySource.next()
@@ -312,7 +320,7 @@ class BridgeRuntime(
 
         stopFakeTelemetry()
         appendLog("Starting SSM2 polling.")
-        updateState { copy(pollingStatus = "SSM2 over CAN") }
+        updateState { copy(ecu = StepStatus(StepState.OK, "SSM2 で受信中")) }
         realPollingTask = pollExecutor.scheduleWithFixedDelay(
             {
                 try {
@@ -391,7 +399,7 @@ class BridgeRuntime(
         val task = fakePollingTask ?: return
         task.cancel(true)
         fakePollingTask = null
-        updateState { copy(pollingStatus = "stopped") }
+        updateState { copy(ecu = StepStatus(StepState.IDLE, "停止中")) }
         appendLog("Fake telemetry stopped.")
     }
 
@@ -399,7 +407,7 @@ class BridgeRuntime(
         val task = realPollingTask ?: return
         task.cancel(true)
         realPollingTask = null
-        updateState { copy(pollingStatus = "stopped") }
+        updateState { copy(ecu = StepStatus(StepState.IDLE, "停止中")) }
         appendLog("SSM2 polling stopped.")
     }
 
@@ -412,7 +420,7 @@ class BridgeRuntime(
     }
 
     private fun CanCaptureProgress.summary(): String =
-        "recording\n$frames frames / ${ids.size} IDs / restarts $restarts"
+        "記録中  ${"%,d".format(frames)} フレーム / ${ids.size} ID / 再開 $restarts 回"
 
     private fun publishTelemetry(telemetry: SubaruTelemetry) {
         lastTelemetry = telemetry

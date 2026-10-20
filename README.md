@@ -64,10 +64,10 @@ SSM2 value handling is aligned with public RomRaider Subaru logger definitions. 
 `CAN capture` records the passive CAN broadcast on the OBD port with ELM327 `ATMA` and saves it as CSV, for working out which ID and byte carries pedal, switch, and gear signals. GH8 broadcasts frames such as `410`, `411`, `412`, `511`-`514`, `600`, `601`, and `620` on the OBD port.
 
 1. Connect the adapter as usual.
-2. Tap `Start CAN capture`. SSM2 polling pauses while recording.
-3. Tap a marker (`Idle`, `Throttle`, `Brake`, `Clutch`, `Gear`, `Lights`, `Drive`, `Mark`) when you start each action.
-4. Tap `Stop capture`. SSM2 polling resumes automatically.
-5. Tap `Export capture` to save the CSV through the Android save dialog.
+2. Tap `記録を開始` in the `CAN 記録` section. SSM2 polling pauses while recording.
+3. Tap a marker (`アイドル`, `アクセル`, `ブレーキ`, `クラッチ`, `ギア`, `灯火類`, `走行`, `その他`) when you start each action. The CSV stores English keys (`idle`, `throttle`, `brake`, `clutch`, `gear`, `lights`, `drive`, `mark`).
+4. Tap `記録を止める`. SSM2 polling resumes automatically.
+5. Tap `CSV を書き出す` to save the CSV through the Android save dialog.
 
 ELM327 adapters stop `ATMA` with `BUFFER FULL` when Bluetooth cannot keep up. The app restarts `ATMA` automatically and logs each restart, so short gaps can appear in the capture. Capture aborts after 5 consecutive `ATMA` runs without frames.
 

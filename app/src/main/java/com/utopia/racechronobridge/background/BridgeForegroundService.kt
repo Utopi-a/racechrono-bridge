@@ -60,8 +60,8 @@ class BridgeForegroundService : Service() {
 
         return Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification_bridge)
-            .setContentTitle("RaceChrono Bridge running")
-            .setContentText("Keeping the SSM2 bridge alive while RaceChrono is foreground.")
+            .setContentTitle("RaceChrono Bridge 動作中")
+            .setContentText("RaceChrono を前面にしてもデータを送り続けます")
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -75,7 +75,7 @@ class BridgeForegroundService : Service() {
             "RaceChrono Bridge",
             NotificationManager.IMPORTANCE_LOW,
         ).apply {
-            description = "Keeps the Bluetooth SSM2 bridge running while RaceChrono is foreground."
+            description = "RaceChrono 使用中もアダプタとの通信を続けるための通知"
             setShowBadge(false)
         }
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)

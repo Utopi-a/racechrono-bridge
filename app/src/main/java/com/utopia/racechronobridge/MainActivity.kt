@@ -8,18 +8,19 @@ import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.text.InputType
+import android.view.Gravity
 import android.view.View
+import android.view.WindowInsets
 import android.view.WindowManager
-import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -31,8 +32,11 @@ import com.utopia.racechronobridge.background.BridgeForegroundService
 import com.utopia.racechronobridge.background.BridgeRuntime
 import com.utopia.racechronobridge.background.BridgeRuntimeState
 import com.utopia.racechronobridge.background.BridgeRuntimeStore
+import com.utopia.racechronobridge.background.StepState
+import com.utopia.racechronobridge.background.StepStatus
 import com.utopia.racechronobridge.diagnostics.AppExitDiagnostics
 import com.utopia.racechronobridge.racechrono.RaceChronoTcpServer
+import com.utopia.racechronobridge.racechrono.RaceChronoTcpStatus
 import com.utopia.racechronobridge.ssm2.ChannelMode
 import com.utopia.racechronobridge.ssm2.CustomTelemetryChannel
 import com.utopia.racechronobridge.ssm2.CustomTelemetryChannelParser
@@ -43,7 +47,6 @@ import com.utopia.racechronobridge.ssm2.modeFor
 import java.util.Locale
 
 class MainActivity : Activity(), BridgeRuntime.Listener {
-    private val mainHandler = Handler(Looper.getMainLooper())
     private val channelModes = TelemetryChannel.defaultModes()
     private val customChannels = mutableListOf<CustomTelemetryChannel>()
     private val preferences: SharedPreferences by lazy {
@@ -56,18 +59,23 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
     private lateinit var runtime: BridgeRuntime
     private var currentRuntimeState = BridgeRuntimeState()
 
-    private lateinit var telemetryView: TextView
-    private lateinit var eventView: TextView
-    private lateinit var tcpStatusView: TextView
-    private lateinit var bleStatusView: TextView
-    private lateinit var elmStatusView: TextView
-    private lateinit var pollingStatusView: TextView
-    private lateinit var canCaptureStatusView: TextView
+    private lateinit var adapterStep: StepRow
+    private lateinit var ecuStep: StepRow
+    private lateinit var raceChronoStep: StepRow
+    private lateinit var connectionButton: TextView
+    private lateinit var devicesLayout: LinearLayout
+    private lateinit var telemetryGrid: LinearLayout
+    private val telemetryTiles = mutableMapOf<String, TelemetryTile>()
+    private lateinit var captureStep: StepRow
+    private lateinit var captureButton: TextView
+    private lateinit var exportButton: TextView
+    private lateinit var markerButtons: List<TextView>
     private lateinit var channelSettingsLayout: LinearLayout
     private lateinit var customChannelInput: EditText
     private lateinit var customChannelsLayout: LinearLayout
-    private lateinit var devicesLayout: LinearLayout
+    private lateinit var tcpToggleButton: TextView
     private lateinit var logView: TextView
+    private var detailsExpanded = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -82,12 +90,8 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
         runtime.setCustomChannels(customChannels)
 
         setContentView(buildContentView())
-        tcpStatusView.text = "${RaceChronoTcpServer.HOST}:${RaceChronoTcpServer.PORT}\nserver stopped / no client"
-        renderTelemetry(SubaruTelemetry.EMPTY)
-        refreshLog()
         runtime.addListener(this)
         startupDiagnostics.forEach(runtime::appendUserLog)
-        runtime.appendUserLog("App ready. In RaceChrono, enable RC2/RC3 only. Do not enable NMEA 0183.")
         ensureBridgePermissions {
             startBridgeForegroundService()
             runtime.attemptAutoConnectLastDevice()
@@ -119,32 +123,25 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
     }
 
     override fun onBridgeRuntimeStateChanged(state: BridgeRuntimeState) {
+        val previous = currentRuntimeState
         currentRuntimeState = state
-        if (::tcpStatusView.isInitialized) {
-            tcpStatusView.text = "${state.tcpStatus.host}:${state.tcpStatus.port}\n" +
-                "${if (state.tcpStatus.running) "server running" else "server stopped"} / " +
-                if (state.tcpStatus.clientConnected) "client connected" else "no client"
+        if (!::adapterStep.isInitialized) {
+            return
         }
-        if (::bleStatusView.isInitialized) {
-            bleStatusView.text = state.bleStatus
-        }
-        if (::elmStatusView.isInitialized) {
-            elmStatusView.text = state.elmStatus
-        }
-        if (::pollingStatusView.isInitialized) {
-            pollingStatusView.text = state.pollingStatus
-        }
-        if (::canCaptureStatusView.isInitialized) {
-            canCaptureStatusView.text = state.canCaptureStatus
+        adapterStep.render(state.adapter)
+        ecuStep.render(state.ecu)
+        raceChronoStep.render(raceChronoStatus(state.tcpStatus))
+        renderConnectionButton(state)
+        if (previous.scanDevices != state.scanDevices || previous.adapter != state.adapter) {
+            renderScanDevices(state)
         }
         lastTelemetry = state.telemetry
-        if (::telemetryView.isInitialized) {
-            renderTelemetry(state.telemetry)
+        updateTelemetryValues(state.telemetry)
+        renderCapture(state)
+        tcpToggleButton.text = if (state.tcpStatus.running) "TCP サーバーを止める" else "TCP サーバーを開始"
+        if (detailsExpanded) {
+            refreshLog()
         }
-        if (::devicesLayout.isInitialized) {
-            renderScanDevices(state.scanDevices)
-        }
-        refreshLog()
     }
 
     override fun onRequestPermissionsResult(
@@ -163,7 +160,7 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
             action?.invoke()
         } else {
             appendLog("BLE permissions were denied.")
-            showUserMessage("Bluetooth権限が拒否されました")
+            showUserMessage("Bluetooth の権限がないため接続できません")
         }
     }
 
@@ -191,7 +188,7 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
         }.onSuccess { text ->
             if (text.isBlank()) {
                 appendLog("Selected custom channel file was empty.")
-                showUserMessage("Selected file was empty")
+                showUserMessage("ファイルが空でした")
             } else {
                 customChannelInput.setText(text)
                 customChannelInput.setSelection(customChannelInput.text.length)
@@ -199,428 +196,413 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
             }
         }.onFailure { error ->
             appendLog("Custom channel file read failed: ${error.message}")
-            showUserMessage("Failed to read selected file")
+            showUserMessage("ファイルを読み込めませんでした")
         }
     }
 
     private fun buildContentView(): View {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(20.dp(), 20.dp(), 20.dp(), 20.dp())
+            setPadding(16.dp(), 12.dp(), 16.dp(), 32.dp())
+        }
+
+        root.addView(
+            TextView(this).apply {
+                text = getString(R.string.app_name)
+                textSize = 20f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(COLOR_TEXT)
+                setPadding(0, 8.dp(), 0, 4.dp())
+            },
+        )
+
+        root.addView(sectionLabel("接続"))
+        root.addView(buildConnectionCard())
+        connectionButton = primaryButton("") { onConnectionButtonTapped() }
+        root.addView(connectionButton, fullWidthParams(top = 10))
+        devicesLayout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        root.addView(devicesLayout)
+        root.addView(
+            caption(
+                "RaceChrono 側の設定: 他のデバイス → RaceChrono DIY → TCP/IP " +
+                    "${RaceChronoTcpServer.HOST}:${RaceChronoTcpServer.PORT}。" +
+                    "RC2/RC3 はオン、NMEA 0183 はオフ。",
+            ),
+            fullWidthParams(top = 8),
+        )
+
+        root.addView(sectionLabel("ライブ値"))
+        telemetryGrid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        root.addView(telemetryGrid)
+        rebuildTelemetryTiles()
+
+        root.addView(sectionLabel("CAN 記録"))
+        root.addView(buildCaptureSection())
+
+        root.addView(
+            collapsibleSection(
+                title = "送信チャンネル",
+                summary = "RaceChrono に送る項目と更新頻度",
+            ) {
+                addView(caption("RaceChrono 側の欄名は固定です。ライブ値の右上にある A1・D1 などが、RaceChrono の Analog 1・Digital 1 に対応します。"))
+                channelSettingsLayout = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+                addView(channelSettingsLayout, fullWidthParams(top = 8))
+                renderChannelSettings()
+            },
+        )
+        root.addView(
+            collapsibleSection(
+                title = "カスタム SSM2 チャンネル",
+                summary = "任意のアドレスを読んで、指定した欄に差し替える",
+            ) { buildCustomChannelSection(this) },
+        )
+        root.addView(
+            collapsibleSection(
+                title = "詳細",
+                summary = "手動操作とログ",
+                onToggle = { expanded ->
+                    detailsExpanded = expanded
+                    if (expanded) refreshLog()
+                },
+            ) { buildDetailsSection(this) },
+        )
+
+        return ScrollView(this).apply {
             setBackgroundColor(COLOR_BACKGROUND)
-        }
-
-        root.addView(heroPanel())
-        eventView = eventBanner("Ready. Start Bluetooth scan or wait for auto-connect.")
-        root.addView(eventView)
-
-        root.addView(sectionTitle("Status"))
-        root.addView(
-            LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                val tcpCard = statusCard(
-                    "TCP",
-                    "${RaceChronoTcpServer.HOST}:${RaceChronoTcpServer.PORT}\nserver stopped",
-                )
-                tcpStatusView = tcpCard.valueView
-                addView(tcpCard.view, weightedCellParams(left = true))
-
-                val bleCard = statusCard("Bluetooth", "disconnected")
-                bleStatusView = bleCard.valueView
-                addView(bleCard.view, weightedCellParams(left = false))
-            },
-        )
-        root.addView(
-            LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                val elmCard = statusCard("ELM327", "not initialized")
-                elmStatusView = elmCard.valueView
-                addView(elmCard.view, weightedCellParams(left = true))
-
-                val pollingCard = statusCard("Polling", "stopped")
-                pollingStatusView = pollingCard.valueView
-                addView(pollingCard.view, weightedCellParams(left = false))
-            },
-        )
-
-        root.addView(sectionTitle("Actions"))
-        root.addView(
-            actionGrid(
-                listOf(
-                    ActionSpec("Scan Bluetooth") {
-                        ensureBridgePermissions {
-                            startBridgeForegroundService()
-                            runtime.startBleScan()
-                        }
-                    },
-                    ActionSpec("Initialize ELM327") {
-                        ensureBridgePermissions {
-                            startBridgeForegroundService()
-                            runtime.initializeElm327()
-                        }
-                    },
-                    ActionSpec("Start SSM2") {
-                        ensureBridgePermissions {
-                            startBridgeForegroundService()
-                            runtime.startRealTelemetry()
-                        }
-                    },
-                    ActionSpec("Stop telemetry") { runtime.stopTelemetry() },
-                    ActionSpec("Fake 5 Hz") {
-                        ensureBridgePermissions {
-                            startBridgeForegroundService()
-                            runtime.startFakeTelemetry()
-                        }
-                    },
-                    ActionSpec("Stop scan") { runtime.stopBleScan() },
-                    ActionSpec("Start TCP") {
-                        ensureBridgePermissions {
-                            startBridgeForegroundService()
-                            runtime.startTcpServer()
-                        }
-                    },
-                    ActionSpec("Stop TCP") { runtime.stopTcpServer() },
-                    ActionSpec("Copy mapping") { copyRaceChronoMapping() },
-                    ActionSpec("Copy log") { copyDebugLog() },
-                ),
-            ),
-        )
-
-        root.addView(
-            infoStrip("RaceChrono DIY TCP/IP  ${RaceChronoTcpServer.HOST}:${RaceChronoTcpServer.PORT}   RC2/RC3 ON   NMEA OFF"),
-        )
-
-        root.addView(sectionTitle("CAN capture"))
-        root.addView(
-            TextView(this).apply {
-                text = "Records all broadcast CAN frames (ATMA) to a CSV file. SSM2 polling pauses while recording. " +
-                    "Tap a marker when you start each action."
-                textSize = 13f
-                setTextColor(COLOR_TEXT_SECONDARY)
-                setPadding(0, 0, 0, 8)
-            },
-        )
-        val canCaptureCard = statusCard("Capture", "stopped")
-        canCaptureStatusView = canCaptureCard.valueView
-        root.addView(canCaptureCard.view, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT,
-            LinearLayout.LayoutParams.WRAP_CONTENT,
-        ).apply { setMargins(0, 0, 0, 10.dp()) })
-        root.addView(
-            actionGrid(
-                listOf(
-                    ActionSpec("Start CAN capture") {
-                        ensureBridgePermissions {
-                            startBridgeForegroundService()
-                            runtime.startCanCapture()
-                        }
-                    },
-                    ActionSpec("Stop capture") { runtime.stopCanCapture() },
-                    ActionSpec("Export capture") { exportCanCapture() },
-                ),
-            ),
-        )
-        root.addView(
-            LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                CAN_CAPTURE_MARKERS.chunked(4).forEach { rowMarkers ->
-                    addView(
-                        LinearLayout(context).apply {
-                            orientation = LinearLayout.HORIZONTAL
-                            rowMarkers.forEach { marker ->
-                                addView(
-                                    compactButton(marker, active = false) { runtime.markCanCapture(marker.lowercase(Locale.US)) },
-                                    LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-                                        setMargins(3.dp(), 3.dp(), 3.dp(), 3.dp())
-                                    },
-                                )
-                            }
-                        },
-                    )
+            isFillViewport = true
+            clipToPadding = true
+            addView(root)
+            // Android 15 forces edge-to-edge; older versions already lay out below the system bars.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+                setOnApplyWindowInsetsListener { view, insets ->
+                    val bars = insets.getInsets(WindowInsets.Type.systemBars())
+                    view.setPadding(0, bars.top, 0, bars.bottom)
+                    insets
                 }
-            },
-        )
-
-        telemetryView = TextView(this).apply {
-            textSize = 15f
-            typeface = Typeface.MONOSPACE
-            setTextColor(COLOR_TEXT_PRIMARY)
-            setLineSpacing(0f, 1.08f)
-            setPadding(18, 16, 18, 16)
+            }
         }
-        root.addView(sectionTitle("Live telemetry"))
-        root.addView(telemetryPanel())
+    }
 
-        root.addView(sectionTitle("Channels"))
-        root.addView(
-            TextView(this).apply {
-                text = "RaceChrono RC3 field names are fixed; use this mapping for Analog/Digital labels."
-                textSize = 13f
-                setTextColor(COLOR_TEXT_SECONDARY)
-                setPadding(0, 0, 0, 8)
-            },
-        )
-        channelSettingsLayout = LinearLayout(this).apply {
+    private fun buildConnectionCard(): View {
+        adapterStep = stepRow("アダプタ")
+        ecuStep = stepRow("ECU（SSM2）")
+        raceChronoStep = stepRow("RaceChrono")
+        return card {
+            addView(adapterStep.view)
+            addView(divider())
+            addView(ecuStep.view)
+            addView(divider())
+            addView(raceChronoStep.view)
+        }
+    }
+
+    private fun buildCaptureSection(): View {
+        captureStep = stepRow("状態")
+        captureButton = primaryButton("記録を開始") {
+            if (currentRuntimeState.capture.state == StepState.WORKING) {
+                runtime.stopCanCapture()
+            } else {
+                ensureBridgePermissions {
+                    startBridgeForegroundService()
+                    runtime.startCanCapture()
+                }
+            }
+        }
+        exportButton = secondaryButton("CSV を書き出す") { exportCanCapture() }
+        markerButtons = CAN_CAPTURE_MARKERS.map { marker ->
+            secondaryButton(marker.label) {
+                runtime.markCanCapture(marker.key)
+                showUserMessage("目印「${marker.label}」を記録しました")
+            }
+        }
+
+        return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            addView(caption("車内を流れる CAN 信号をそのまま CSV に保存します。記録中は SSM2 の取得を止めます。操作を始めるときに目印を押してください。"))
+            addView(card { addView(captureStep.view) }, fullWidthParams(top = 8))
+            addView(
+                row(
+                    captureButton to 1f,
+                    exportButton to 1f,
+                ),
+                fullWidthParams(top = 10),
+            )
+            addView(sectionHint("目印"), fullWidthParams(top = 14))
+            markerButtons.chunked(4).forEach { rowButtons ->
+                addView(row(*rowButtons.map { it to 1f }.toTypedArray()), fullWidthParams(top = 6))
+            }
         }
-        root.addView(channelSettingsLayout)
-        renderChannelSettings()
+    }
 
-        root.addView(sectionTitle("Custom SSM2 channels"))
-        root.addView(
-            TextView(this).apply {
-                text = "Paste CSV or key=value text from an LLM. Custom rows replace their selected RC3 field."
-                textSize = 13f
-                setTextColor(COLOR_TEXT_SECONDARY)
-                setPadding(0, 0, 0, 8)
-            },
-        )
+    private fun buildCustomChannelSection(container: LinearLayout) {
+        container.addView(caption("CSV か key=value 形式の行を貼り付けて取り込むと、指定した欄の値を置き換えます。"))
         customChannelInput = EditText(this).apply {
             hint = CUSTOM_CHANNEL_SAMPLE
-            minLines = 4
+            minLines = 3
             maxLines = 8
             textSize = 13f
             typeface = Typeface.MONOSPACE
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
-            setTextColor(COLOR_TEXT_PRIMARY)
-            setHintTextColor(COLOR_TEXT_SECONDARY)
-            setPadding(18, 14, 18, 14)
-            background = roundedRect(COLOR_SURFACE, radius = 16f)
+            setTextColor(COLOR_TEXT)
+            setHintTextColor(COLOR_TEXT_MUTED)
+            setPadding(12.dp(), 10.dp(), 12.dp(), 10.dp())
+            background = rounded(COLOR_SURFACE)
         }
-        root.addView(customChannelInput)
-        root.addView(
-            LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                addView(
-                    compactButton("Paste", active = false) { pasteCustomChannelConfig() },
-                    LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
-                )
-                addView(
-                    compactButton("Open file", active = false) { openCustomChannelFile() },
-                    LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
-                )
-                addView(
-                    compactButton("Import", active = true) { importCustomChannelsFromInput() },
-                    LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
-                )
-                addView(
-                    compactButton("Clear", active = false) { clearCustomChannels() },
-                    LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
-                )
-            },
+        container.addView(customChannelInput, fullWidthParams(top = 8))
+        container.addView(
+            row(
+                secondaryButton("貼り付け") { pasteCustomChannelConfig() } to 1f,
+                secondaryButton("ファイル") { openCustomChannelFile() } to 1f,
+                primaryButton("取り込む") { importCustomChannelsFromInput() } to 1f,
+            ),
+            fullWidthParams(top = 8),
         )
-        root.addView(
-            compactButton("Load standard tuning preset", active = false) { loadStandardTuningPreset() },
+        container.addView(
+            row(
+                secondaryButton("標準セットを読み込む") { loadStandardTuningPreset() } to 2f,
+                secondaryButton("すべて削除") { clearCustomChannels() } to 1f,
+            ),
+            fullWidthParams(top = 8),
         )
-        customChannelsLayout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(0, 10, 0, 0)
-        }
-        root.addView(customChannelsLayout)
+        customChannelsLayout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        container.addView(customChannelsLayout, fullWidthParams(top = 10))
         renderCustomChannels()
-
-        root.addView(
-            sectionTitle("Bluetooth devices"),
-        )
-
-        devicesLayout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-        }
-        root.addView(devicesLayout)
-
-        logView = TextView(this).apply {
-            textSize = 12f
-            typeface = Typeface.MONOSPACE
-            setTextColor(COLOR_TEXT_SECONDARY)
-            setPadding(0, 24, 0, 0)
-        }
-        root.addView(logView)
-
-        return ScrollView(this).apply {
-            addView(root)
-        }
     }
 
-    private fun heroPanel(): View {
-        return LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(18.dp(), 18.dp(), 18.dp(), 18.dp())
-            background = roundedRect(COLOR_SURFACE, radius = 18f.dpFloat(), strokeColor = COLOR_SURFACE_BORDER)
-            addView(
-                TextView(context).apply {
-                    text = "RaceChrono Bridge"
-                    textSize = 27f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(COLOR_TEXT_PRIMARY)
-                },
-            )
-            addView(
-                TextView(context).apply {
-                    text = "Subaru SSM2 over CAN -> RC3 TCP"
-                    textSize = 14f
-                    setTextColor(COLOR_TEXT_SECONDARY)
-                    setPadding(0, 4, 0, 0)
-                },
-            )
-        }
-    }
-
-    private fun eventBanner(initialText: String): TextView {
-        return TextView(this).apply {
-            text = initialText
-            textSize = 13f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(COLOR_TEXT_PRIMARY)
-            setPadding(14.dp(), 12.dp(), 14.dp(), 12.dp())
-            background = roundedRect(COLOR_EVENT_SURFACE, radius = 16f.dpFloat(), strokeColor = COLOR_ACCENT_DIM)
-        }
-    }
-
-    private fun statusCard(label: String, initialValue: String): StatusCard {
-        val valueView = TextView(this).apply {
-            text = initialValue
-            textSize = 13f
-            setTextColor(COLOR_TEXT_PRIMARY)
-            setPadding(0, 5.dp(), 0, 0)
-        }
-        val card = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(14.dp(), 12.dp(), 14.dp(), 12.dp())
-            background = roundedRect(COLOR_SURFACE, radius = 16f.dpFloat(), strokeColor = COLOR_SURFACE_BORDER)
-            addView(
-                TextView(context).apply {
-                    text = label
-                    textSize = 11f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(COLOR_ACCENT)
-                },
-            )
-            addView(valueView)
-        }
-        return StatusCard(view = card, valueView = valueView)
-    }
-
-    private fun weightedCellParams(left: Boolean): LinearLayout.LayoutParams {
-        return LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-            if (left) {
-                setMargins(0, 0, 6.dp(), 10.dp())
+    private fun buildDetailsSection(container: LinearLayout) {
+        tcpToggleButton = secondaryButton("TCP サーバーを止める") {
+            if (currentRuntimeState.tcpStatus.running) {
+                runtime.stopTcpServer()
             } else {
-                setMargins(6.dp(), 0, 0, 10.dp())
+                ensureBridgePermissions {
+                    startBridgeForegroundService()
+                    runtime.startTcpServer()
+                }
             }
         }
-    }
-
-    private fun actionGrid(actions: List<ActionSpec>): View {
-        return LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            actions.chunked(2).forEach { rowActions ->
-                addView(
-                    LinearLayout(context).apply {
-                        orientation = LinearLayout.HORIZONTAL
-                        rowActions.forEachIndexed { index, action ->
-                            addView(
-                                button(action.label, action.onClick),
-                                weightedCellParams(left = index == 0),
-                            )
-                        }
-                        if (rowActions.size == 1) {
-                            addView(View(context), weightedCellParams(left = false))
-                        }
-                    },
-                )
-            }
-        }
-    }
-
-    private fun infoStrip(text: String): TextView {
-        return TextView(this).apply {
-            this.text = text
-            textSize = 12f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(COLOR_ACCENT)
-            setPadding(14.dp(), 12.dp(), 14.dp(), 12.dp())
-            background = roundedRect(COLOR_ACCENT_WASH, radius = 16f.dpFloat(), strokeColor = COLOR_ACCENT_DIM)
-        }
-    }
-
-    private fun telemetryPanel(): View {
-        return LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = roundedRect(COLOR_TELEMETRY_SURFACE, radius = 16f.dpFloat(), strokeColor = COLOR_SURFACE_BORDER)
-            addView(telemetryView)
-        }
-    }
-
-    private fun button(label: String, onClick: () -> Unit): Button {
-        return Button(this).apply {
-            text = label
-            isAllCaps = false
-            setTextColor(Color.WHITE)
-            minHeight = 0
-            minimumHeight = 0
-            setPadding(10.dp(), 11.dp(), 10.dp(), 11.dp())
-            background = roundedRect(COLOR_BUTTON, radius = 14f.dpFloat())
-            setOnClickListener { onClick() }
-        }
-    }
-
-    private fun compactButton(label: String, active: Boolean, onClick: () -> Unit): Button {
-        return Button(this).apply {
-            text = label
-            isAllCaps = false
-            textSize = 12f
-            minHeight = 0
-            minimumHeight = 0
-            setPadding(10.dp(), 5.dp(), 10.dp(), 5.dp())
-            setTextColor(if (active) Color.BLACK else COLOR_TEXT_SECONDARY)
-            background = roundedRect(if (active) COLOR_ACCENT else COLOR_SURFACE_ALT, radius = 14f.dpFloat())
-            setOnClickListener { onClick() }
-        }
-    }
-
-    private fun sectionTitle(label: String): TextView {
-        return TextView(this).apply {
-            text = label
-            textSize = 18f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(COLOR_TEXT_PRIMARY)
-            setPadding(0, 22.dp(), 0, 8.dp())
-        }
-    }
-
-    private fun roundedRect(
-        color: Int,
-        radius: Float,
-        strokeColor: Int? = null,
-    ): GradientDrawable {
-        return GradientDrawable().apply {
-            setColor(color)
-            cornerRadius = radius
-            if (strokeColor != null) {
-                setStroke(1, strokeColor)
-            }
-        }
-    }
-
-    private fun Int.dp(): Int = (this * resources.displayMetrics.density).toInt()
-
-    private fun Float.dpFloat(): Float = this * resources.displayMetrics.density
-
-    private fun renderScanDevices(devices: List<BleScanDevice>) {
-        devicesLayout.removeAllViews()
-        devices.forEach { device ->
-            val likelyLabel = if (device.likelyElmAdapter) "likely ELM" else "BLE"
-            val bondedLabel = if (device.bonded) "paired" else "scan"
-            val rssiLabel = if (device.rssi == BleDeviceScanner.RSSI_UNKNOWN) "-" else "${device.rssi} dBm"
-            devicesLayout.addView(
-                button("${device.name} / ${device.address} / $rssiLabel / $likelyLabel / $bondedLabel") {
+        container.addView(
+            row(
+                secondaryButton("ELM327 を初期化") {
                     ensureBridgePermissions {
                         startBridgeForegroundService()
-                        runtime.connectBleDevice(device)
+                        runtime.initializeElm327()
                     }
+                } to 1f,
+                secondaryButton("テストデータを送る") {
+                    ensureBridgePermissions {
+                        startBridgeForegroundService()
+                        runtime.startFakeTelemetry()
+                    }
+                } to 1f,
+            ),
+        )
+        container.addView(
+            row(
+                tcpToggleButton to 1f,
+                secondaryButton("送信を止める") { runtime.stopTelemetry() } to 1f,
+            ),
+            fullWidthParams(top = 8),
+        )
+        container.addView(
+            row(
+                secondaryButton("欄の対応をコピー") { copyRaceChronoMapping() } to 1f,
+                secondaryButton("ログをコピー") { copyDebugLog() } to 1f,
+            ),
+            fullWidthParams(top = 8),
+        )
+        logView = TextView(this).apply {
+            textSize = 11f
+            typeface = Typeface.MONOSPACE
+            setTextColor(COLOR_TEXT_MUTED)
+            setTextIsSelectable(true)
+            setPadding(12.dp(), 10.dp(), 12.dp(), 10.dp())
+            background = rounded(COLOR_SURFACE)
+        }
+        container.addView(logView, fullWidthParams(top = 10))
+    }
+
+    private fun onConnectionButtonTapped() {
+        val state = currentRuntimeState
+        when {
+            state.scanning -> runtime.stopBleScan()
+            state.adapter.state != StepState.OK -> ensureBridgePermissions {
+                startBridgeForegroundService()
+                runtime.startBleScan()
+            }
+            state.ecu.state == StepState.OK -> runtime.stopTelemetry()
+            else -> ensureBridgePermissions {
+                startBridgeForegroundService()
+                runtime.initializeElm327(startPollingOnSuccess = true)
+            }
+        }
+    }
+
+    private fun renderConnectionButton(state: BridgeRuntimeState) {
+        connectionButton.text = when {
+            state.scanning -> "探すのをやめる"
+            state.adapter.state == StepState.WORKING -> "接続中…"
+            state.adapter.state != StepState.OK -> "アダプタを探す"
+            state.capture.state == StepState.WORKING -> "CAN 記録中"
+            state.ecu.state == StepState.OK -> "取得を止める"
+            state.ecu.state == StepState.WORKING -> "初期化中…"
+            else -> "取得を開始"
+        }
+        val enabled = state.scanning || (
+            state.adapter.state != StepState.WORKING &&
+                state.ecu.state != StepState.WORKING &&
+                state.capture.state != StepState.WORKING
+            )
+        connectionButton.isEnabled = enabled
+        connectionButton.alpha = if (enabled) 1f else 0.5f
+    }
+
+    private fun raceChronoStatus(status: RaceChronoTcpStatus): StepStatus = when {
+        !status.running -> StepStatus(StepState.FAILED, "TCP サーバー停止中")
+        status.clientConnected -> StepStatus(StepState.OK, "接続済み")
+        else -> StepStatus(StepState.WORKING, "RaceChrono からの接続待ち")
+    }
+
+    private fun renderScanDevices(state: BridgeRuntimeState) {
+        devicesLayout.removeAllViews()
+        if (state.adapter.state == StepState.OK || state.scanDevices.isEmpty()) {
+            return
+        }
+        devicesLayout.addView(sectionHint("見つかったデバイス（タップで接続）"), fullWidthParams(top = 14))
+        devicesLayout.addView(
+            card {
+                state.scanDevices.forEachIndexed { index, device ->
+                    if (index > 0) addView(divider())
+                    addView(deviceRow(device))
+                }
+            },
+            fullWidthParams(top = 6),
+        )
+    }
+
+    private fun deviceRow(device: BleScanDevice): View {
+        val details = buildList {
+            if (device.bonded) add("ペアリング済み")
+            if (device.likelyElmAdapter) add("OBD アダプタ")
+            if (device.rssi != BleDeviceScanner.RSSI_UNKNOWN) add("${device.rssi} dBm")
+            add(device.address)
+        }.joinToString(" · ")
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(14.dp(), 12.dp(), 14.dp(), 12.dp())
+            background = pressable(Color.TRANSPARENT)
+            isClickable = true
+            setOnClickListener {
+                ensureBridgePermissions {
+                    startBridgeForegroundService()
+                    runtime.connectBleDevice(device)
+                }
+            }
+            addView(
+                TextView(context).apply {
+                    text = device.name
+                    textSize = 15f
+                    setTextColor(COLOR_TEXT)
+                },
+            )
+            addView(
+                TextView(context).apply {
+                    text = details
+                    textSize = 12f
+                    setTextColor(COLOR_TEXT_MUTED)
+                    setPadding(0, 2.dp(), 0, 0)
                 },
             )
         }
+    }
+
+    private fun renderCapture(state: BridgeRuntimeState) {
+        captureStep.render(state.capture)
+        val recording = state.capture.state == StepState.WORKING
+        captureButton.text = if (recording) "記録を止める" else "記録を開始"
+        val canStart = recording || state.adapter.state == StepState.OK
+        captureButton.isEnabled = canStart
+        captureButton.alpha = if (canStart) 1f else 0.5f
+        val canExport = !recording && state.canCaptureFile?.isFile == true
+        exportButton.isEnabled = canExport
+        exportButton.alpha = if (canExport) 1f else 0.5f
+        markerButtons.forEach { button ->
+            button.isEnabled = recording
+            button.alpha = if (recording) 1f else 0.4f
+        }
+    }
+
+    private fun rebuildTelemetryTiles() {
+        telemetryGrid.removeAllViews()
+        telemetryTiles.clear()
+        val customByField = customChannels.associateBy { it.rc3Field }
+        val tiles = TelemetryChannel.entries.map { channel ->
+            val custom = customByField[channel.rc3Field]
+            val tile = telemetryTile(
+                label = custom?.label ?: displayLabel(channel),
+                field = shortField(channel.rc3Field),
+            )
+            telemetryTiles[channel.rc3Field] = tile
+            tile.view
+        }
+        tiles.chunked(TELEMETRY_COLUMNS).forEachIndexed { index, rowTiles ->
+            val rowViews = rowTiles.map { it to 1f }.toMutableList()
+            repeat(TELEMETRY_COLUMNS - rowTiles.size) { rowViews += View(this) to 1f }
+            telemetryGrid.addView(row(*rowViews.toTypedArray()), fullWidthParams(top = if (index == 0) 0 else 8))
+        }
+        updateTelemetryValues(lastTelemetry)
+    }
+
+    private fun updateTelemetryValues(telemetry: SubaruTelemetry) {
+        val customByField = customChannels.associateBy { it.rc3Field }
+        TelemetryChannel.entries.forEach { channel ->
+            val tile = telemetryTiles[channel.rc3Field] ?: return@forEach
+            val custom = customByField[channel.rc3Field]
+            val (value, unit) = if (custom != null) {
+                customValue(custom, telemetry)
+            } else {
+                builtInValue(channel, telemetry)
+            }
+            tile.value.text = value
+            tile.unit.text = displayUnit(unit)
+            tile.view.alpha = if (value == OFF_LABEL) 0.45f else 1f
+        }
+    }
+
+    private fun builtInValue(channel: TelemetryChannel, telemetry: SubaruTelemetry): Pair<String, String> {
+        if (channelModes.modeFor(channel) == ChannelMode.OFF) {
+            return OFF_LABEL to ""
+        }
+        if (telemetry.timestampMillis == 0L) {
+            return NO_VALUE to channel.unit
+        }
+        val value = when (channel) {
+            TelemetryChannel.RPM -> "%.0f".format(Locale.US, telemetry.rpm)
+            TelemetryChannel.GEAR -> telemetry.gear.takeIf { it > 0 }?.toString() ?: NO_VALUE
+            TelemetryChannel.BOOST -> "%.1f".format(Locale.US, telemetry.boostKpa)
+            TelemetryChannel.COOLANT -> "%.0f".format(Locale.US, telemetry.coolantC)
+            TelemetryChannel.THROTTLE -> "%.1f".format(Locale.US, telemetry.throttlePercent)
+            TelemetryChannel.ACCELERATOR -> "%.1f".format(Locale.US, telemetry.acceleratorPercent)
+            TelemetryChannel.PRIMARY_WGDC -> "%.1f".format(Locale.US, telemetry.primaryWastegateDutyPercent)
+            TelemetryChannel.VEHICLE_SPEED -> "%.0f".format(Locale.US, telemetry.vehicleSpeedKph)
+            TelemetryChannel.INTAKE_AIR_TEMP -> "%.0f".format(Locale.US, telemetry.intakeAirTempC)
+            TelemetryChannel.BATTERY_VOLTAGE -> "%.2f".format(Locale.US, telemetry.batteryVoltage)
+            TelemetryChannel.MASS_AIRFLOW -> "%.1f".format(Locale.US, telemetry.massAirflowGps)
+            TelemetryChannel.IGNITION_TIMING -> "%.1f".format(Locale.US, telemetry.ignitionTimingDeg)
+            TelemetryChannel.KNOCK_CORRECTION -> "%.1f".format(Locale.US, telemetry.knockCorrectionDeg)
+            TelemetryChannel.LEARNED_IGNITION -> "%.1f".format(Locale.US, telemetry.learnedIgnitionTimingDeg)
+            TelemetryChannel.INJECTOR_PULSE_WIDTH -> "%.2f".format(Locale.US, telemetry.injectorPulseWidthMs)
+            TelemetryChannel.FUEL_PUMP_DUTY -> "%.1f".format(Locale.US, telemetry.fuelPumpDutyPercent)
+            TelemetryChannel.ALTERNATOR_DUTY -> "%.1f".format(Locale.US, telemetry.alternatorDutyPercent)
+        }
+        return value to channel.unit
+    }
+
+    private fun customValue(channel: CustomTelemetryChannel, telemetry: SubaruTelemetry): Pair<String, String> {
+        if (channel.mode == ChannelMode.OFF) {
+            return OFF_LABEL to ""
+        }
+        val value = telemetry.customValues[channel.id] ?: return NO_VALUE to channel.unit
+        return "%.2f".format(Locale.US, value) to channel.unit
     }
 
     private fun renderChannelSettings() {
@@ -628,45 +610,88 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
             return
         }
         channelSettingsLayout.removeAllViews()
-        TelemetryChannel.entries.forEach { channel ->
-            val mode = channelModes.modeFor(channel)
-            val row = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(18, 12, 18, 12)
-                background = roundedRect(COLOR_SURFACE, radius = 16f, strokeColor = COLOR_SURFACE_BORDER)
-            }
+        channelSettingsLayout.addView(
+            card {
+                TelemetryChannel.entries.forEachIndexed { index, channel ->
+                    if (index > 0) addView(divider())
+                    addView(
+                        settingRow(
+                            title = displayLabel(channel),
+                            subtitle = "${channel.rc3Field} · ${displayUnit(channel.unit).ifBlank { "単位なし" }}",
+                            mode = channelModes.modeFor(channel),
+                        ) { mode -> setChannelMode(channel, mode) },
+                    )
+                }
+            },
+        )
+    }
 
-            row.addView(
-                TextView(this).apply {
-                    text = channel.rc3Field
-                    textSize = 13f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(COLOR_ACCENT)
-                },
-            )
-            row.addView(
-                TextView(this).apply {
-                    text = channel.mappingLabel
-                    textSize = 15f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(COLOR_TEXT_PRIMARY)
-                    setPadding(0, 2.dp(), 0, 8.dp())
-                },
-            )
-            row.addView(
-                modeSelector(mode) { candidate ->
-                    setChannelMode(channel, candidate)
-                },
-            )
+    private fun renderCustomChannels() {
+        if (!::customChannelsLayout.isInitialized) {
+            return
+        }
+        customChannelsLayout.removeAllViews()
+        if (customChannels.isEmpty()) {
+            customChannelsLayout.addView(caption("取り込んだチャンネルはまだありません。"))
+            return
+        }
+        customChannelsLayout.addView(
+            card {
+                customChannels.forEachIndexed { index, channel ->
+                    if (index > 0) addView(divider())
+                    addView(
+                        settingRow(
+                            title = channel.mappingLabel,
+                            subtitle = "${channel.rc3Field} · ${channel.addressLabel} · raw × ${channel.scale} + ${channel.offset}",
+                            mode = channel.mode,
+                            onRemove = { removeCustomChannel(channel.id) },
+                        ) { mode -> setCustomChannelMode(channel.id, mode) },
+                    )
+                }
+            },
+        )
+    }
 
-            channelSettingsLayout.addView(
-                row,
-                LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                ).apply {
-                    setMargins(0, 0, 0, 10)
+    private fun settingRow(
+        title: String,
+        subtitle: String,
+        mode: ChannelMode,
+        onRemove: (() -> Unit)? = null,
+        onModeSelected: (ChannelMode) -> Unit,
+    ): View {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(14.dp(), 8.dp(), 10.dp(), 8.dp())
+            addView(
+                LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(
+                        TextView(context).apply {
+                            text = title
+                            textSize = 14f
+                            setTextColor(COLOR_TEXT)
+                            maxLines = 1
+                        },
+                    )
+                    addView(
+                        TextView(context).apply {
+                            text = subtitle
+                            textSize = 11f
+                            setTextColor(COLOR_TEXT_MUTED)
+                        },
+                    )
+                    if (onRemove != null) {
+                        addView(textAction("削除", onRemove))
+                    }
                 },
+                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    marginEnd = 8.dp()
+                },
+            )
+            addView(
+                modeSelector(mode, onModeSelected),
+                LinearLayout.LayoutParams(MODE_SELECTOR_WIDTH_DP.dp(), LinearLayout.LayoutParams.WRAP_CONTENT),
             )
         }
     }
@@ -677,34 +702,24 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
     ): View {
         return LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            MODE_SELECTOR_ORDER.forEachIndexed { index, mode ->
+            background = rounded(COLOR_SURFACE_RAISED)
+            setPadding(2.dp(), 2.dp(), 2.dp(), 2.dp())
+            MODE_SELECTOR_ORDER.forEach { mode ->
+                val active = selectedMode == mode
                 addView(
-                    modeButton(mode.label, active = selectedMode == mode) { onModeSelected(mode) },
-                    LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-                        val left = if (index == 0) 0 else 4.dp()
-                        val right = if (index == MODE_SELECTOR_ORDER.lastIndex) 0 else 4.dp()
-                        setMargins(left, 0, right, 0)
+                    TextView(context).apply {
+                        text = modeLabel(mode)
+                        textSize = 12f
+                        gravity = Gravity.CENTER
+                        setPadding(0, 7.dp(), 0, 7.dp())
+                        setTextColor(if (active) Color.WHITE else COLOR_TEXT_MUTED)
+                        background = if (active) rounded(COLOR_ACCENT, radius = 8f) else pressable(Color.TRANSPARENT)
+                        isClickable = true
+                        setOnClickListener { if (!active) onModeSelected(mode) }
                     },
+                    LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
                 )
             }
-        }
-    }
-
-    private fun modeButton(label: String, active: Boolean, onClick: () -> Unit): Button {
-        return Button(this).apply {
-            text = label
-            isAllCaps = false
-            textSize = 13f
-            minHeight = 0
-            minimumHeight = 0
-            setPadding(10.dp(), 11.dp(), 10.dp(), 11.dp())
-            setTextColor(if (active) Color.BLACK else COLOR_TEXT_PRIMARY)
-            background = roundedRect(
-                if (active) COLOR_ACCENT else COLOR_SURFACE_ALT,
-                radius = 12f.dpFloat(),
-                strokeColor = if (active) COLOR_ACCENT else COLOR_SURFACE_BORDER,
-            )
-            setOnClickListener { onClick() }
         }
     }
 
@@ -713,7 +728,7 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
         preferences.edit().putString(channel.preferenceKey, mode.name).apply()
         runtime.setChannelModes(channelModes)
         renderChannelSettings()
-        renderTelemetry(lastTelemetry)
+        updateTelemetryValues(lastTelemetry)
         appendLog("${channel.label} mode changed to ${mode.label}.")
     }
 
@@ -727,79 +742,13 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
         }
     }
 
-    private fun renderCustomChannels() {
-        if (!::customChannelsLayout.isInitialized) {
-            return
-        }
-        customChannelsLayout.removeAllViews()
-        if (customChannels.isEmpty()) {
-            customChannelsLayout.addView(
-                TextView(this).apply {
-                    text = "No custom channels imported."
-                    textSize = 13f
-                    setTextColor(COLOR_TEXT_SECONDARY)
-                    setPadding(0, 6, 0, 8)
-                },
-            )
-            return
-        }
-
-        customChannels.forEach { channel ->
-            val row = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(18, 12, 18, 12)
-                background = roundedRect(COLOR_SURFACE, radius = 16f)
-            }
-            row.addView(
-                TextView(this).apply {
-                    text = "${channel.rc3Field} -> ${channel.mappingLabel}"
-                    textSize = 14f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(COLOR_TEXT_PRIMARY)
-                },
-            )
-            row.addView(
-                TextView(this).apply {
-                    text = "${channel.addressLabel} / ${channel.bytes} byte / value = raw * ${channel.scale} + ${channel.offset}"
-                    textSize = 12f
-                    setTextColor(COLOR_TEXT_SECONDARY)
-                    setPadding(0, 3, 0, 6)
-                },
-            )
-            row.addView(
-                LinearLayout(this).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    addView(
-                        modeSelector(channel.mode) { candidate ->
-                            setCustomChannelMode(channel.id, candidate)
-                        },
-                        LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 3f),
-                    )
-                    addView(
-                        compactButton("Remove", active = false) { removeCustomChannel(channel.id) },
-                        LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
-                    )
-                },
-            )
-            customChannelsLayout.addView(
-                row,
-                LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                ).apply {
-                    setMargins(0, 0, 0, 10)
-                },
-            )
-        }
-    }
-
     private fun importCustomChannelsFromInput() {
         val text = customChannelInput.text?.toString().orEmpty()
         val result = CustomTelemetryChannelParser.parse(text)
         if (result.channels.isEmpty()) {
             appendLog("No custom channels imported.")
             result.errors.forEach { error -> appendLog("Custom channel import error: $error") }
-            showUserMessage("No custom channels imported")
+            showUserMessage("取り込めるチャンネルがありませんでした（詳細はログ）")
             return
         }
 
@@ -808,11 +757,10 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
         customChannels.clear()
         customChannels.addAll(TelemetryChannel.entries.mapNotNull { channel -> byField[channel.rc3Field] })
         saveCustomChannels()
-        renderCustomChannels()
-        renderTelemetry(lastTelemetry)
+        onCustomChannelsChanged()
         result.errors.forEach { error -> appendLog("Custom channel import error: $error") }
         appendLog("Imported ${result.channels.size} custom SSM2 channel(s).")
-        showUserMessage("Imported ${result.channels.size} custom channel(s)")
+        showUserMessage("${result.channels.size} 件のチャンネルを取り込みました")
     }
 
     private fun pasteCustomChannelConfig() {
@@ -823,12 +771,11 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
             ?.coerceToText(this)
             ?.toString()
         if (text.isNullOrBlank()) {
-            appendLog("Clipboard does not contain custom channel text.")
+            showUserMessage("クリップボードが空です")
             return
         }
         customChannelInput.setText(text)
         customChannelInput.setSelection(customChannelInput.text.length)
-        appendLog("Pasted custom channel text from clipboard.")
     }
 
     private fun openCustomChannelFile() {
@@ -849,14 +796,14 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
             startActivityForResult(intent, CUSTOM_CHANNEL_FILE_REQUEST)
         }.onFailure { error ->
             appendLog("Custom channel file picker failed: ${error.message}")
-            showUserMessage("Could not open file picker")
+            showUserMessage("ファイル選択を開けませんでした")
         }
     }
 
     private fun exportCanCapture() {
         val file = currentRuntimeState.canCaptureFile
         if (file == null || !file.isFile) {
-            showUserMessage("No CAN capture file yet")
+            showUserMessage("まだ記録がありません")
             return
         }
         val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
@@ -868,7 +815,7 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
             startActivityForResult(intent, CAN_CAPTURE_EXPORT_REQUEST)
         }.onFailure { error ->
             appendLog("CAN capture export picker failed: ${error.message}")
-            showUserMessage("Could not open save dialog")
+            showUserMessage("保存先の選択を開けませんでした")
         }
     }
 
@@ -884,10 +831,10 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
             } ?: error("destination stream unavailable")
         }.onSuccess {
             appendLog("CAN capture exported: ${file.name}")
-            showUserMessage("Exported ${file.name}")
+            showUserMessage("${file.name} を保存しました")
         }.onFailure { error ->
             appendLog("CAN capture export failed: ${error.message}")
-            showUserMessage("CAN capture export failed")
+            showUserMessage("CSV の保存に失敗しました")
         }
     }
 
@@ -903,10 +850,9 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
             customChannelInput.text?.clear()
         }
         saveCustomChannels()
-        renderCustomChannels()
-        renderTelemetry(lastTelemetry)
+        onCustomChannelsChanged()
         appendLog("Custom SSM2 channels cleared.")
-        showUserMessage("Custom channels cleared")
+        showUserMessage("カスタムチャンネルを削除しました")
     }
 
     private fun setCustomChannelMode(channelId: String, mode: ChannelMode) {
@@ -916,8 +862,7 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
         }
         customChannels[index] = customChannels[index].copy(mode = mode)
         saveCustomChannels()
-        renderCustomChannels()
-        renderTelemetry(lastTelemetry)
+        onCustomChannelsChanged()
         appendLog("${customChannels[index].label} mode changed to ${mode.label}.")
     }
 
@@ -925,9 +870,13 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
         val removed = customChannels.firstOrNull { it.id == channelId } ?: return
         customChannels.removeAll { it.id == channelId }
         saveCustomChannels()
-        renderCustomChannels()
-        renderTelemetry(lastTelemetry)
+        onCustomChannelsChanged()
         appendLog("Removed custom channel: ${removed.label}.")
+    }
+
+    private fun onCustomChannelsChanged() {
+        renderCustomChannels()
+        rebuildTelemetryTiles()
     }
 
     private fun loadCustomChannels() {
@@ -951,59 +900,10 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
         requestNotificationPermissionIfNeeded()
         runCatching {
             BridgeForegroundService.start(this)
-        }.onSuccess {
-            appendLog("Foreground keep-alive service requested.")
         }.onFailure { error ->
             appendLog("Foreground keep-alive service failed: ${error.message}")
-            showUserMessage("バックグラウンド維持サービスの起動に失敗しました")
+            showUserMessage("バックグラウンドで動かし続ける準備に失敗しました")
         }
-    }
-
-    private fun renderTelemetry(telemetry: SubaruTelemetry) {
-        val customByField = customChannels.associateBy { it.rc3Field }
-        telemetryView.text = TelemetryChannel.entries.joinToString("\n") { channel ->
-            customByField[channel.rc3Field]?.let { customChannel ->
-                customTelemetryLine(customChannel, telemetry)
-            } ?: telemetryLine(channel, telemetry)
-        }
-    }
-
-    private fun telemetryLine(channel: TelemetryChannel, telemetry: SubaruTelemetry): String {
-        val formatAndValue = when (channel) {
-            TelemetryChannel.RPM -> "%.0f rpm" to telemetry.rpm
-            TelemetryChannel.GEAR -> "%s" to (telemetry.gear.takeIf { it > 0 }?.toString() ?: "-")
-            TelemetryChannel.BOOST -> "%.1f kPa" to telemetry.boostKpa
-            TelemetryChannel.COOLANT -> "%.1f C" to telemetry.coolantC
-            TelemetryChannel.THROTTLE -> "%.1f %%" to telemetry.throttlePercent
-            TelemetryChannel.ACCELERATOR -> "%.1f %%" to telemetry.acceleratorPercent
-            TelemetryChannel.PRIMARY_WGDC -> "%.1f %%" to telemetry.primaryWastegateDutyPercent
-            TelemetryChannel.VEHICLE_SPEED -> "%.1f km/h" to telemetry.vehicleSpeedKph
-            TelemetryChannel.INTAKE_AIR_TEMP -> "%.1f C" to telemetry.intakeAirTempC
-            TelemetryChannel.BATTERY_VOLTAGE -> "%.2f V" to telemetry.batteryVoltage
-            TelemetryChannel.MASS_AIRFLOW -> "%.1f g/s" to telemetry.massAirflowGps
-            TelemetryChannel.IGNITION_TIMING -> "%.1f deg" to telemetry.ignitionTimingDeg
-            TelemetryChannel.KNOCK_CORRECTION -> "%.1f deg" to telemetry.knockCorrectionDeg
-            TelemetryChannel.LEARNED_IGNITION -> "%.1f deg" to telemetry.learnedIgnitionTimingDeg
-            TelemetryChannel.INJECTOR_PULSE_WIDTH -> "%.2f ms" to telemetry.injectorPulseWidthMs
-            TelemetryChannel.FUEL_PUMP_DUTY -> "%.1f %%" to telemetry.fuelPumpDutyPercent
-            TelemetryChannel.ALTERNATOR_DUTY -> "%.1f %%" to telemetry.alternatorDutyPercent
-        }
-        val renderedValue = if (channelModes.modeFor(channel) == ChannelMode.OFF) {
-            "OFF"
-        } else {
-            String.format(Locale.US, formatAndValue.first, formatAndValue.second)
-        }
-        return "${channel.rc3Field.padEnd(13)} ${channel.label.padEnd(16)} $renderedValue"
-    }
-
-    private fun customTelemetryLine(channel: CustomTelemetryChannel, telemetry: SubaruTelemetry): String {
-        val renderedValue = if (channel.mode == ChannelMode.OFF) {
-            "OFF"
-        } else {
-            val value = telemetry.customValues[channel.id]
-            if (value == null) "-" else String.format(Locale.US, "%.3f %s", value, channel.unit).trim()
-        }
-        return "${channel.rc3Field.padEnd(13)} ${channel.label.padEnd(16)} $renderedValue"
     }
 
     private fun ensureBridgePermissions(action: () -> Unit) {
@@ -1046,25 +946,7 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
     }
 
     private fun showUserMessage(message: String) {
-        val update = {
-            if (::eventView.isInitialized) {
-                val error = message.contains("failed", ignoreCase = true) ||
-                    message.contains("失敗") ||
-                    message.contains("拒否")
-                eventView.text = message
-                eventView.background = roundedRect(
-                    if (error) COLOR_ERROR_SURFACE else COLOR_EVENT_SURFACE,
-                    radius = 16f.dpFloat(),
-                    strokeColor = if (error) COLOR_ERROR_BORDER else COLOR_ACCENT_DIM,
-                )
-            }
-            Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
-        }
-        if (Looper.myLooper() == Looper.getMainLooper()) {
-            update()
-        } else {
-            mainHandler.post { update() }
-        }
+        runOnUiThread { Toast.makeText(this, message, Toast.LENGTH_SHORT).show() }
     }
 
     private fun appendLog(message: String) {
@@ -1075,7 +957,7 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
 
     private fun refreshLog() {
         if (::logView.isInitialized) {
-            logView.text = currentRuntimeState.logs.joinToString(separator = "\n")
+            logView.text = currentRuntimeState.logs.takeLast(LOG_LINES_SHOWN).joinToString(separator = "\n")
         }
     }
 
@@ -1084,14 +966,14 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
         clipboard.setPrimaryClip(
             ClipData.newPlainText("RaceChrono Bridge debug log", currentRuntimeState.logs.joinToString("\n")),
         )
-        appendLog("Debug log copied to clipboard.")
+        showUserMessage("ログをコピーしました")
     }
 
     private fun copyRaceChronoMapping() {
         val mapping = raceChronoMappingLines().joinToString(separator = "\n")
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         clipboard.setPrimaryClip(ClipData.newPlainText("RaceChrono Bridge channel mapping", mapping))
-        appendLog("RaceChrono channel mapping copied to clipboard.")
+        showUserMessage("欄の対応をコピーしました")
     }
 
     private fun raceChronoMappingLines(): List<String> {
@@ -1106,14 +988,272 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
         }
     }
 
-    private data class ActionSpec(
-        val label: String,
-        val onClick: () -> Unit,
+    private fun sectionLabel(text: String): TextView = TextView(this).apply {
+        this.text = text
+        textSize = 13f
+        typeface = Typeface.DEFAULT_BOLD
+        setTextColor(COLOR_TEXT_MUTED)
+        setPadding(2.dp(), 24.dp(), 0, 8.dp())
+    }
+
+    private fun sectionHint(text: String): TextView = TextView(this).apply {
+        this.text = text
+        textSize = 12f
+        setTextColor(COLOR_TEXT_MUTED)
+        setPadding(2.dp(), 0, 0, 0)
+    }
+
+    private fun caption(text: String): TextView = TextView(this).apply {
+        this.text = text
+        textSize = 12f
+        setTextColor(COLOR_TEXT_MUTED)
+        setLineSpacing(0f, 1.15f)
+        setPadding(2.dp(), 0, 2.dp(), 0)
+    }
+
+    private fun card(build: LinearLayout.() -> Unit): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        background = rounded(COLOR_SURFACE)
+        clipToOutline = true
+        build()
+    }
+
+    private fun divider(): View = View(this).apply {
+        setBackgroundColor(COLOR_DIVIDER)
+        layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1)
+    }
+
+    private fun stepRow(title: String): StepRow {
+        val dot = View(this)
+        val detail = TextView(this).apply {
+            textSize = 13f
+            setTextColor(COLOR_TEXT_MUTED)
+            gravity = Gravity.END
+        }
+        val view = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(14.dp(), 13.dp(), 14.dp(), 13.dp())
+            addView(dot, LinearLayout.LayoutParams(8.dp(), 8.dp()).apply { marginEnd = 12.dp() })
+            addView(
+                TextView(context).apply {
+                    text = title
+                    textSize = 15f
+                    setTextColor(COLOR_TEXT)
+                },
+            )
+            addView(
+                detail,
+                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    marginStart = 12.dp()
+                },
+            )
+        }
+        return StepRow(view = view, dot = dot, detail = detail)
+    }
+
+    private fun StepRow.render(status: StepStatus) {
+        val color = when (status.state) {
+            StepState.IDLE -> COLOR_STATE_IDLE
+            StepState.WORKING -> COLOR_STATE_WORKING
+            StepState.OK -> COLOR_STATE_OK
+            StepState.FAILED -> COLOR_STATE_FAILED
+        }
+        dot.background = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(color)
+        }
+        detail.text = status.detail
+        detail.setTextColor(if (status.state == StepState.FAILED) COLOR_STATE_FAILED else COLOR_TEXT_MUTED)
+    }
+
+    private fun telemetryTile(label: String, field: String): TelemetryTile {
+        val value = TextView(this).apply {
+            textSize = 20f
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            fontFeatureSettings = "tnum"
+            setTextColor(COLOR_TEXT)
+            maxLines = 1
+        }
+        val unit = TextView(this).apply {
+            textSize = 11f
+            setTextColor(COLOR_TEXT_MUTED)
+            setPadding(3.dp(), 0, 0, 0)
+            maxLines = 1
+        }
+        val view = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(10.dp(), 8.dp(), 10.dp(), 8.dp())
+            background = rounded(COLOR_SURFACE)
+            addView(
+                LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    addView(
+                        TextView(context).apply {
+                            text = label
+                            textSize = 12f
+                            setTextColor(COLOR_TEXT_MUTED)
+                            maxLines = 1
+                        },
+                        LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
+                    )
+                    addView(
+                        TextView(context).apply {
+                            text = field
+                            textSize = 11f
+                            setTextColor(COLOR_TEXT_FAINT)
+                        },
+                    )
+                },
+            )
+            addView(
+                LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.BOTTOM
+                    setPadding(0, 2.dp(), 0, 0)
+                    addView(value)
+                    addView(
+                        unit,
+                        LinearLayout.LayoutParams(
+                            LinearLayout.LayoutParams.WRAP_CONTENT,
+                            LinearLayout.LayoutParams.WRAP_CONTENT,
+                        ).apply { bottomMargin = 3.dp() },
+                    )
+                },
+            )
+        }
+        return TelemetryTile(view = view, value = value, unit = unit)
+    }
+
+    private fun collapsibleSection(
+        title: String,
+        summary: String,
+        onToggle: (Boolean) -> Unit = {},
+        build: LinearLayout.() -> Unit,
+    ): View {
+        val body = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            setPadding(0, 4.dp(), 0, 0)
+            build()
+        }
+        val toggleLabel = TextView(this).apply {
+            text = "開く"
+            textSize = 13f
+            setTextColor(COLOR_ACCENT_TEXT)
+        }
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(14.dp(), 12.dp(), 14.dp(), 12.dp())
+            background = pressable(COLOR_SURFACE)
+            isClickable = true
+            addView(
+                LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(
+                        TextView(context).apply {
+                            text = title
+                            textSize = 15f
+                            setTextColor(COLOR_TEXT)
+                        },
+                    )
+                    addView(
+                        TextView(context).apply {
+                            text = summary
+                            textSize = 12f
+                            setTextColor(COLOR_TEXT_MUTED)
+                        },
+                    )
+                },
+                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
+            )
+            addView(toggleLabel)
+            setOnClickListener {
+                val expand = body.visibility != View.VISIBLE
+                body.visibility = if (expand) View.VISIBLE else View.GONE
+                toggleLabel.text = if (expand) "閉じる" else "開く"
+                onToggle(expand)
+            }
+        }
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, 12.dp(), 0, 0)
+            addView(header)
+            addView(body, fullWidthParams(top = 8))
+        }
+    }
+
+    private fun primaryButton(label: String, onClick: () -> Unit): TextView =
+        actionButton(label, background = COLOR_ACCENT, textColor = Color.WHITE, onClick = onClick)
+
+    private fun secondaryButton(label: String, onClick: () -> Unit): TextView =
+        actionButton(label, background = COLOR_SURFACE_RAISED, textColor = COLOR_TEXT, onClick = onClick)
+
+    private fun actionButton(label: String, background: Int, textColor: Int, onClick: () -> Unit): TextView =
+        TextView(this).apply {
+            text = label
+            textSize = 14f
+            gravity = Gravity.CENTER
+            minHeight = 46.dp()
+            setPadding(10.dp(), 10.dp(), 10.dp(), 10.dp())
+            setTextColor(textColor)
+            this.background = pressable(background)
+            isClickable = true
+            setOnClickListener { onClick() }
+        }
+
+    private fun textAction(label: String, onClick: () -> Unit): TextView = TextView(this).apply {
+        text = label
+        textSize = 13f
+        setTextColor(COLOR_STATE_FAILED)
+        setPadding(0, 6.dp(), 12.dp(), 2.dp())
+        isClickable = true
+        setOnClickListener { onClick() }
+    }
+
+    private fun row(vararg children: Pair<View, Float>): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        children.forEachIndexed { index, (child, weight) ->
+            addView(
+                child,
+                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, weight).apply {
+                    if (index > 0) marginStart = 8.dp()
+                },
+            )
+        }
+    }
+
+    private fun fullWidthParams(top: Int = 0) = LinearLayout.LayoutParams(
+        LinearLayout.LayoutParams.MATCH_PARENT,
+        LinearLayout.LayoutParams.WRAP_CONTENT,
+    ).apply { topMargin = top.dp() }
+
+    private fun rounded(color: Int, radius: Float = 10f): GradientDrawable = GradientDrawable().apply {
+        setColor(color)
+        cornerRadius = radius * resources.displayMetrics.density
+    }
+
+    private fun pressable(color: Int): RippleDrawable =
+        RippleDrawable(ColorStateList.valueOf(COLOR_RIPPLE), rounded(color), rounded(Color.WHITE))
+
+    private fun Int.dp(): Int = (this * resources.displayMetrics.density).toInt()
+
+    private class StepRow(
+        val view: View,
+        val dot: View,
+        val detail: TextView,
     )
 
-    private data class StatusCard(
+    private class TelemetryTile(
         val view: View,
-        val valueView: TextView,
+        val value: TextView,
+        val unit: TextView,
+    )
+
+    private class CaptureMarker(
+        val label: String,
+        val key: String,
     )
 
     companion object {
@@ -1121,28 +1261,80 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
         private const val CUSTOM_CHANNEL_FILE_REQUEST = 1002
         private const val NOTIFICATION_PERMISSION_REQUEST = 1003
         private const val CAN_CAPTURE_EXPORT_REQUEST = 1004
-        private val CAN_CAPTURE_MARKERS = listOf(
-            "Idle", "Throttle", "Brake", "Clutch",
-            "Gear", "Lights", "Drive", "Mark",
-        )
         private const val KEY_CUSTOM_CHANNELS = "custom_channels"
+        private const val LOG_LINES_SHOWN = 80
+        private const val OFF_LABEL = "オフ"
+        private const val NO_VALUE = "—"
         private const val CUSTOM_CHANNEL_SAMPLE =
             "slot,label,unit,address,bytes,scale,offset,mode,signed\n" +
                 "Analog 15,Oil temp,C,0x000108,1,1,-40,Slow,false"
+
+        // Keys stay English so capture files can be analyzed regardless of the UI language.
+        private val CAN_CAPTURE_MARKERS = listOf(
+            CaptureMarker("アイドル", "idle"),
+            CaptureMarker("アクセル", "throttle"),
+            CaptureMarker("ブレーキ", "brake"),
+            CaptureMarker("クラッチ", "clutch"),
+            CaptureMarker("ギア", "gear"),
+            CaptureMarker("灯火類", "lights"),
+            CaptureMarker("走行", "drive"),
+            CaptureMarker("その他", "mark"),
+        )
         private val MODE_SELECTOR_ORDER = listOf(ChannelMode.OFF, ChannelMode.SLOW, ChannelMode.FAST)
-        private val COLOR_BACKGROUND = Color.rgb(7, 12, 17)
-        private val COLOR_SURFACE = Color.rgb(18, 29, 38)
-        private val COLOR_TELEMETRY_SURFACE = Color.rgb(10, 19, 24)
-        private val COLOR_SURFACE_ALT = Color.rgb(31, 45, 56)
-        private val COLOR_SURFACE_BORDER = Color.rgb(45, 68, 82)
-        private val COLOR_BUTTON = Color.rgb(36, 57, 72)
-        private val COLOR_ACCENT = Color.rgb(109, 255, 191)
-        private val COLOR_ACCENT_DIM = Color.rgb(48, 122, 94)
-        private val COLOR_ACCENT_WASH = Color.rgb(14, 45, 35)
-        private val COLOR_EVENT_SURFACE = Color.rgb(15, 37, 35)
-        private val COLOR_ERROR_SURFACE = Color.rgb(57, 22, 28)
-        private val COLOR_ERROR_BORDER = Color.rgb(169, 61, 72)
-        private val COLOR_TEXT_PRIMARY = Color.rgb(237, 246, 244)
-        private val COLOR_TEXT_SECONDARY = Color.rgb(156, 174, 181)
+
+        private fun modeLabel(mode: ChannelMode): String = when (mode) {
+            ChannelMode.OFF -> "送らない"
+            ChannelMode.SLOW -> "ゆっくり"
+            ChannelMode.FAST -> "毎回"
+        }
+
+        private const val TELEMETRY_COLUMNS = 3
+        private const val MODE_SELECTOR_WIDTH_DP = 196
+
+        private fun displayLabel(channel: TelemetryChannel): String = when (channel) {
+            TelemetryChannel.RPM -> "回転数"
+            TelemetryChannel.GEAR -> "ギア"
+            TelemetryChannel.BOOST -> "ブースト"
+            TelemetryChannel.COOLANT -> "水温"
+            TelemetryChannel.THROTTLE -> "スロットル"
+            TelemetryChannel.ACCELERATOR -> "アクセル"
+            TelemetryChannel.PRIMARY_WGDC -> "WGDC"
+            TelemetryChannel.VEHICLE_SPEED -> "車速"
+            TelemetryChannel.INTAKE_AIR_TEMP -> "吸気温"
+            TelemetryChannel.BATTERY_VOLTAGE -> "電圧"
+            TelemetryChannel.MASS_AIRFLOW -> "吸入空気量"
+            TelemetryChannel.IGNITION_TIMING -> "点火時期"
+            TelemetryChannel.KNOCK_CORRECTION -> "ノック補正"
+            TelemetryChannel.LEARNED_IGNITION -> "学習点火"
+            TelemetryChannel.INJECTOR_PULSE_WIDTH -> "噴射時間"
+            TelemetryChannel.FUEL_PUMP_DUTY -> "燃料ポンプ"
+            TelemetryChannel.ALTERNATOR_DUTY -> "オルタネータ"
+        }
+
+        private fun displayUnit(unit: String): String = when (unit) {
+            "C" -> "℃"
+            "deg" -> "°"
+            else -> unit
+        }
+
+        private fun shortField(rc3Field: String): String {
+            val number = rc3Field.substringAfter(' ').substringBefore('/')
+            return if (rc3Field.startsWith("Digital")) "D$number" else "A$number"
+        }
+
+        private val COLOR_BACKGROUND = Color.rgb(17, 19, 21)
+        private val COLOR_SURFACE = Color.rgb(27, 30, 33)
+        private val COLOR_SURFACE_RAISED = Color.rgb(40, 44, 48)
+        private val COLOR_DIVIDER = Color.rgb(44, 49, 54)
+        private val COLOR_TEXT = Color.rgb(232, 234, 237)
+        private val COLOR_TEXT_MUTED = Color.rgb(150, 158, 166)
+        private val COLOR_TEXT_FAINT = Color.rgb(100, 108, 116)
+        private val COLOR_ACCENT = Color.rgb(44, 104, 222)
+        private val COLOR_ACCENT_TEXT = Color.rgb(110, 160, 245)
+        private val COLOR_RIPPLE = Color.argb(48, 255, 255, 255)
+        private val COLOR_STATE_IDLE = Color.rgb(100, 108, 116)
+        private val COLOR_STATE_WORKING = Color.rgb(214, 160, 46)
+        private val COLOR_STATE_OK = Color.rgb(63, 185, 80)
+        private val COLOR_STATE_FAILED = Color.rgb(240, 98, 88)
     }
 }

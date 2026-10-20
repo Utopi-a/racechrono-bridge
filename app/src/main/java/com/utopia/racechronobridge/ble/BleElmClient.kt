@@ -7,6 +7,7 @@ import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothProfile
+import android.bluetooth.BluetoothStatusCodes
 import android.content.Context
 import android.os.Build
 import com.utopia.racechronobridge.elm.Elm327Transport
@@ -149,7 +150,7 @@ class BleElmClient(
         val characteristic = writeCharacteristic ?: error("BLE write characteristic is not ready.")
         val payload = text.toByteArray(StandardCharsets.US_ASCII)
         val writeStarted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            gatt.writeCharacteristic(characteristic, payload, characteristic.writeType) == BluetoothGatt.GATT_SUCCESS
+            gatt.writeCharacteristic(characteristic, payload, characteristic.writeType) == BluetoothStatusCodes.SUCCESS
         } else {
             characteristic.value = payload
             gatt.writeCharacteristic(characteristic)
