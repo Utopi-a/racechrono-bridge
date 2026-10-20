@@ -68,6 +68,29 @@ class ClassicBluetoothElmClient(
     }
 
     @Synchronized
+    override fun writeRaw(text: String) {
+        val activeOutput = output ?: error("Bluetooth SPP output is not ready.")
+        activeOutput.write(text.toByteArray(StandardCharsets.US_ASCII))
+        activeOutput.flush()
+    }
+
+    @Synchronized
+    override fun readAvailable(timeoutMillis: Long): String {
+        val activeInput = input ?: error("Bluetooth SPP input is not ready.")
+        val deadline = System.currentTimeMillis() + timeoutMillis
+        while (activeInput.available() == 0) {
+            val remainingMillis = deadline - System.currentTimeMillis()
+            if (remainingMillis <= 0) {
+                return ""
+            }
+            Thread.sleep(minOf(remainingMillis, 20L))
+        }
+        val buffer = ByteArray(activeInput.available())
+        val read = activeInput.read(buffer)
+        return if (read > 0) String(buffer, 0, read, StandardCharsets.US_ASCII) else ""
+    }
+
+    @Synchronized
     override fun close() {
         try {
             input?.close()

@@ -6,10 +6,14 @@ import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import com.utopia.racechronobridge.ble.BleDeviceScanner
 import com.utopia.racechronobridge.ble.BleElmClient
 import com.utopia.racechronobridge.ble.BleScanDevice
 import com.utopia.racechronobridge.bluetooth.ClassicBluetoothElmClient
+import com.utopia.racechronobridge.canlog.CanCaptureProgress
+import com.utopia.racechronobridge.canlog.CanCaptureSession
+import com.utopia.racechronobridge.canlog.CanCaptureWriter
 import com.utopia.racechronobridge.elm.Elm327Session
 import com.utopia.racechronobridge.elm.Elm327Transport
 import com.utopia.racechronobridge.logging.DebugLog
@@ -22,6 +26,9 @@ import com.utopia.racechronobridge.ssm2.FakeSubaruTelemetrySource
 import com.utopia.racechronobridge.ssm2.Ssm2Reader
 import com.utopia.racechronobridge.ssm2.SubaruTelemetry
 import com.utopia.racechronobridge.ssm2.TelemetryChannel
+import java.io.File
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
 import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
@@ -36,6 +43,8 @@ data class BridgeRuntimeState(
     val scanDevices: List<BleScanDevice> = emptyList(),
     val telemetry: SubaruTelemetry = SubaruTelemetry.EMPTY,
     val logs: List<String> = emptyList(),
+    val canCaptureStatus: String = "stopped",
+    val canCaptureFile: File? = null,
 )
 
 class BridgeRuntime(
@@ -74,6 +83,12 @@ class BridgeRuntime(
     private var ssm2Reader: Ssm2Reader? = null
     private var fakePollingTask: ScheduledFuture<*>? = null
     private var realPollingTask: ScheduledFuture<*>? = null
+
+    @Volatile
+    private var canCaptureSession: CanCaptureSession? = null
+
+    @Volatile
+    private var canCaptureWriter: CanCaptureWriter? = null
 
     @Volatile
     private var lastTelemetry: SubaruTelemetry = SubaruTelemetry.EMPTY
@@ -139,6 +154,7 @@ class BridgeRuntime(
 
     fun connectBleDevice(scanDevice: BleScanDevice) {
         stopBleScan()
+        stopCanCapture()
         stopTelemetry()
         updateState { copy(bleStatus = "connecting\n${scanDevice.name}") }
         appendLog("Connecting Bluetooth device: ${scanDevice.name} ${scanDevice.address}")
@@ -197,6 +213,70 @@ class BridgeRuntime(
                 appendLog("ELM327 initialization failed: ${error.message}")
             }
         }
+    }
+
+    fun startCanCapture() {
+        val transport = elmTransport
+        if (transport == null) {
+            appendLog("Connect the Bluetooth adapter before starting CAN capture.")
+            return
+        }
+        if (canCaptureSession != null) {
+            appendLog("CAN capture is already running.")
+            return
+        }
+
+        // ATMA and SSM2 polling share one adapter, so polling pauses during capture.
+        stopTelemetry()
+        val file = newCaptureFile()
+        val startedAt = SystemClock.elapsedRealtime()
+        val writer = CanCaptureWriter(
+            writer = file.bufferedWriter(),
+            elapsedMillis = { SystemClock.elapsedRealtime() - startedAt },
+        )
+        writer.writeHeader("RaceChrono Bridge CAN capture ${LocalDateTime.now()}")
+        val session = CanCaptureSession(
+            transport = transport,
+            writer = writer,
+            onLog = ::appendLog,
+            onProgress = { progress -> updateState { copy(canCaptureStatus = progress.summary()) } },
+        )
+        canCaptureWriter = writer
+        canCaptureSession = session
+        updateState { copy(canCaptureStatus = "starting", canCaptureFile = file, elmStatus = "CAN capture") }
+        appendLog("CAN capture file: ${file.absolutePath}")
+
+        pollExecutor.execute {
+            try {
+                session.run()
+                updateState { copy(canCaptureStatus = "saved\n${file.name}") }
+            } catch (error: Exception) {
+                updateState { copy(canCaptureStatus = "failed\n${error.message}") }
+                appendLog("CAN capture failed: ${error.message}")
+            } finally {
+                writer.close()
+                canCaptureWriter = null
+                canCaptureSession = null
+            }
+            if (elmTransport === transport) {
+                appendLog("Restoring SSM2 polling after CAN capture.")
+                initializeElm327(startPollingOnSuccess = true)
+            }
+        }
+    }
+
+    fun stopCanCapture() {
+        canCaptureSession?.requestStop()
+    }
+
+    fun markCanCapture(label: String) {
+        val writer = canCaptureWriter
+        if (writer == null) {
+            appendLog("Start CAN capture before adding markers.")
+            return
+        }
+        writer.marker(label)
+        appendLog("CAN capture marker: $label")
     }
 
     fun startFakeTelemetry() {
@@ -296,6 +376,7 @@ class BridgeRuntime(
     }
 
     fun shutdown() {
+        stopCanCapture()
         stopTelemetry()
         stopBleScan()
         elmTransport?.close()
@@ -321,6 +402,17 @@ class BridgeRuntime(
         updateState { copy(pollingStatus = "stopped") }
         appendLog("SSM2 polling stopped.")
     }
+
+    private fun newCaptureFile(): File {
+        val directory = appContext.getExternalFilesDir(CAN_CAPTURE_DIRECTORY)
+            ?: File(appContext.filesDir, CAN_CAPTURE_DIRECTORY)
+        directory.mkdirs()
+        val timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"))
+        return File(directory, "can-$timestamp.csv")
+    }
+
+    private fun CanCaptureProgress.summary(): String =
+        "recording\n$frames frames / ${ids.size} IDs / restarts $restarts"
 
     private fun publishTelemetry(telemetry: SubaruTelemetry) {
         lastTelemetry = telemetry
@@ -403,5 +495,6 @@ class BridgeRuntime(
         private const val PREFS_NAME = "racechrono_bridge"
         private const val KEY_LAST_DEVICE_ADDRESS = "last_device_address"
         private const val KEY_LAST_DEVICE_NAME = "last_device_name"
+        private const val CAN_CAPTURE_DIRECTORY = "can-captures"
     }
 }

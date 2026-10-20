@@ -105,26 +105,12 @@ class BleElmClient(
         return connected
     }
 
-    @SuppressLint("MissingPermission")
     override fun sendCommand(command: String, timeoutMillis: Long): String {
-        val gatt = bluetoothGatt ?: error("BLE is not connected.")
-        val characteristic = writeCharacteristic ?: error("BLE write characteristic is not ready.")
-
         synchronized(responseLock) {
             responseBuffer.clear()
         }
 
-        val payload = "$command\r".toByteArray(StandardCharsets.US_ASCII)
-        val writeStarted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            gatt.writeCharacteristic(characteristic, payload, characteristic.writeType) == BluetoothGatt.GATT_SUCCESS
-        } else {
-            characteristic.value = payload
-            gatt.writeCharacteristic(characteristic)
-        }
-
-        if (!writeStarted) {
-            error("BLE write failed to start for command=$command")
-        }
+        writeText("$command\r")
 
         val deadline = System.currentTimeMillis() + timeoutMillis
         synchronized(responseLock) {
@@ -139,6 +125,37 @@ class BleElmClient(
                 error("BLE response timed out for command=$command partial=${responseBuffer}")
             }
             return responseBuffer.toString()
+        }
+    }
+
+    override fun writeRaw(text: String) {
+        writeText(text)
+    }
+
+    override fun readAvailable(timeoutMillis: Long): String {
+        synchronized(responseLock) {
+            if (responseBuffer.isEmpty()) {
+                responseLock.wait(timeoutMillis)
+            }
+            val text = responseBuffer.toString()
+            responseBuffer.clear()
+            return text
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun writeText(text: String) {
+        val gatt = bluetoothGatt ?: error("BLE is not connected.")
+        val characteristic = writeCharacteristic ?: error("BLE write characteristic is not ready.")
+        val payload = text.toByteArray(StandardCharsets.US_ASCII)
+        val writeStarted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            gatt.writeCharacteristic(characteristic, payload, characteristic.writeType) == BluetoothGatt.GATT_SUCCESS
+        } else {
+            characteristic.value = payload
+            gatt.writeCharacteristic(characteristic)
+        }
+        if (!writeStarted) {
+            error("BLE write failed to start for text=${text.trim()}")
         }
     }
 
@@ -158,9 +175,8 @@ class BleElmClient(
         val text = String(value, StandardCharsets.US_ASCII)
         synchronized(responseLock) {
             responseBuffer.append(text)
-            if (text.contains(">")) {
-                responseLock.notifyAll()
-            }
+            // readAvailable waits for any chunk, sendCommand re-checks for the prompt itself.
+            responseLock.notifyAll()
         }
     }
 

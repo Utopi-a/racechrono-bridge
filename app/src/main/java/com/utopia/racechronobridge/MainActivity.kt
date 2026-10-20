@@ -11,6 +11,7 @@ import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -61,6 +62,7 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
     private lateinit var bleStatusView: TextView
     private lateinit var elmStatusView: TextView
     private lateinit var pollingStatusView: TextView
+    private lateinit var canCaptureStatusView: TextView
     private lateinit var channelSettingsLayout: LinearLayout
     private lateinit var customChannelInput: EditText
     private lateinit var customChannelsLayout: LinearLayout
@@ -132,6 +134,9 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
         if (::pollingStatusView.isInitialized) {
             pollingStatusView.text = state.pollingStatus
         }
+        if (::canCaptureStatusView.isInitialized) {
+            canCaptureStatusView.text = state.canCaptureStatus
+        }
         lastTelemetry = state.telemetry
         if (::telemetryView.isInitialized) {
             renderTelemetry(state.telemetry)
@@ -165,6 +170,10 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
     @Deprecated("Used for simple platform document picker integration without extra dependencies.")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == CAN_CAPTURE_EXPORT_REQUEST && resultCode == RESULT_OK) {
+            writeCanCaptureExport(data?.data)
+            return
+        }
         if (requestCode != CUSTOM_CHANNEL_FILE_REQUEST || resultCode != RESULT_OK) {
             return
         }
@@ -279,6 +288,57 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
 
         root.addView(
             infoStrip("RaceChrono DIY TCP/IP  ${RaceChronoTcpServer.HOST}:${RaceChronoTcpServer.PORT}   RC2/RC3 ON   NMEA OFF"),
+        )
+
+        root.addView(sectionTitle("CAN capture"))
+        root.addView(
+            TextView(this).apply {
+                text = "Records all broadcast CAN frames (ATMA) to a CSV file. SSM2 polling pauses while recording. " +
+                    "Tap a marker when you start each action."
+                textSize = 13f
+                setTextColor(COLOR_TEXT_SECONDARY)
+                setPadding(0, 0, 0, 8)
+            },
+        )
+        val canCaptureCard = statusCard("Capture", "stopped")
+        canCaptureStatusView = canCaptureCard.valueView
+        root.addView(canCaptureCard.view, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+        ).apply { setMargins(0, 0, 0, 10.dp()) })
+        root.addView(
+            actionGrid(
+                listOf(
+                    ActionSpec("Start CAN capture") {
+                        ensureBridgePermissions {
+                            startBridgeForegroundService()
+                            runtime.startCanCapture()
+                        }
+                    },
+                    ActionSpec("Stop capture") { runtime.stopCanCapture() },
+                    ActionSpec("Export capture") { exportCanCapture() },
+                ),
+            ),
+        )
+        root.addView(
+            LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                CAN_CAPTURE_MARKERS.chunked(4).forEach { rowMarkers ->
+                    addView(
+                        LinearLayout(context).apply {
+                            orientation = LinearLayout.HORIZONTAL
+                            rowMarkers.forEach { marker ->
+                                addView(
+                                    compactButton(marker, active = false) { runtime.markCanCapture(marker.lowercase(Locale.US)) },
+                                    LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                                        setMargins(3.dp(), 3.dp(), 3.dp(), 3.dp())
+                                    },
+                                )
+                            }
+                        },
+                    )
+                }
+            },
         )
 
         telemetryView = TextView(this).apply {
@@ -793,6 +853,44 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
         }
     }
 
+    private fun exportCanCapture() {
+        val file = currentRuntimeState.canCaptureFile
+        if (file == null || !file.isFile) {
+            showUserMessage("No CAN capture file yet")
+            return
+        }
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "text/csv"
+            putExtra(Intent.EXTRA_TITLE, file.name)
+        }
+        runCatching {
+            startActivityForResult(intent, CAN_CAPTURE_EXPORT_REQUEST)
+        }.onFailure { error ->
+            appendLog("CAN capture export picker failed: ${error.message}")
+            showUserMessage("Could not open save dialog")
+        }
+    }
+
+    private fun writeCanCaptureExport(uri: Uri?) {
+        val file = currentRuntimeState.canCaptureFile
+        if (uri == null || file == null) {
+            appendLog("CAN capture export returned no destination.")
+            return
+        }
+        runCatching {
+            contentResolver.openOutputStream(uri)?.use { output ->
+                file.inputStream().use { input -> input.copyTo(output) }
+            } ?: error("destination stream unavailable")
+        }.onSuccess {
+            appendLog("CAN capture exported: ${file.name}")
+            showUserMessage("Exported ${file.name}")
+        }.onFailure { error ->
+            appendLog("CAN capture export failed: ${error.message}")
+            showUserMessage("CAN capture export failed")
+        }
+    }
+
     private fun loadStandardTuningPreset() {
         customChannelInput.setText(StandardSsm2Preset.tuningPresetCsv)
         customChannelInput.setSelection(customChannelInput.text.length)
@@ -1022,6 +1120,11 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
         private const val BLE_PERMISSION_REQUEST = 1001
         private const val CUSTOM_CHANNEL_FILE_REQUEST = 1002
         private const val NOTIFICATION_PERMISSION_REQUEST = 1003
+        private const val CAN_CAPTURE_EXPORT_REQUEST = 1004
+        private val CAN_CAPTURE_MARKERS = listOf(
+            "Idle", "Throttle", "Brake", "Clutch",
+            "Gear", "Lights", "Drive", "Mark",
+        )
         private const val KEY_CUSTOM_CHANNELS = "custom_channels"
         private const val CUSTOM_CHANNEL_SAMPLE =
             "slot,label,unit,address,bytes,scale,offset,mode,signed\n" +

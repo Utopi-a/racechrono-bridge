@@ -59,6 +59,29 @@ SSM2 value handling is aligned with public RomRaider Subaru logger definitions. 
 6. Connect RaceChrono DIY TCP/IP to `127.0.0.1:9876`.
 7. Enable `RC2/RC3`; keep `NMEA 0183` off.
 
+## CAN Capture
+
+`CAN capture` records the passive CAN broadcast on the OBD port with ELM327 `ATMA` and saves it as CSV, for working out which ID and byte carries pedal, switch, and gear signals. GH8 broadcasts frames such as `410`, `411`, `412`, `511`-`514`, `600`, `601`, and `620` on the OBD port.
+
+1. Connect the adapter as usual.
+2. Tap `Start CAN capture`. SSM2 polling pauses while recording.
+3. Tap a marker (`Idle`, `Throttle`, `Brake`, `Clutch`, `Gear`, `Lights`, `Drive`, `Mark`) when you start each action.
+4. Tap `Stop capture`. SSM2 polling resumes automatically.
+5. Tap `Export capture` to save the CSV through the Android save dialog.
+
+ELM327 adapters stop `ATMA` with `BUFFER FULL` when Bluetooth cannot keep up. The app restarts `ATMA` automatically and logs each restart, so short gaps can appear in the capture. Capture aborts after 5 consecutive `ATMA` runs without frames.
+
+CSV format:
+
+```csv
+elapsed_ms,kind,id,data
+1234,F,410,09001B0F00E702C1
+1250,M,,brake
+1300,S,,BUFFER FULL
+```
+
+`kind` is `F` (frame), `M` (marker), or `S` (adapter status). Monitoring uses `ATS0`, `ATH1`, and `ATCAF0`; the adapter stays silent on the bus (ELM327 default `ATCSM1`).
+
 ## RaceChrono Setup
 
 ```text
