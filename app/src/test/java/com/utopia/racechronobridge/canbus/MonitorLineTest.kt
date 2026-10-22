@@ -1,4 +1,4 @@
-package com.utopia.racechronobridge.canlog
+package com.utopia.racechronobridge.canbus
 
 import kotlin.test.Test
 import kotlin.test.assertEquals

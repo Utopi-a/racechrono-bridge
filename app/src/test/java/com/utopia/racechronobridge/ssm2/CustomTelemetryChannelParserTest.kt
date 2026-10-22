@@ -1,5 +1,6 @@
 package com.utopia.racechronobridge.ssm2
 
+import com.utopia.racechronobridge.canbus.CanSignal
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -40,7 +41,7 @@ class CustomTelemetryChannelParserTest {
         assertEquals(ChannelMode.FAST, channel.mode)
         assertEquals("A800000120", channel.commandForByte(0))
         assertEquals("A800000121", channel.commandForByte(1))
-        assertEquals(466.0, channel.convert(4660))
+        assertEquals(466.0, channel.convert(4660.0))
     }
 
     @Test
@@ -86,14 +87,38 @@ class CustomTelemetryChannelParserTest {
 
         assertEquals("IAM", byField.getValue("Analog 12").label)
         assertEquals(0x0000F9, byField.getValue("Analog 12").address)
-        assertEquals(1.0, byField.getValue("Analog 12").convert(16))
+        assertEquals(1.0, byField.getValue("Analog 12").convert(16.0))
 
         assertEquals("Fine knock learn", byField.getValue("Analog 13").label)
         assertEquals(0x000199, byField.getValue("Analog 13").address)
-        assertEquals(-31.75, byField.getValue("Analog 13").convert(1))
+        assertEquals(-31.75, byField.getValue("Analog 13").convert(1.0))
 
         assertEquals("Engine Load", byField.getValue("Analog 15").label)
         assertEquals(0x000007, byField.getValue("Analog 15").address)
-        assertEquals(100.0, byField.getValue("Analog 15").convert(255), 0.000001)
+        assertEquals(100.0, byField.getValue("Analog 15").convert(255.0), 0.000001)
+    }
+
+    @Test
+    fun parsesCanSignalAddressesAndRoundTripsThem() {
+        val result = CustomTelemetryChannelParser.parse(
+            """
+            slot,label,unit,address,bytes,scale,offset,mode,signed
+            Analog 9,Brake,,can:brake,1,1,0,Fast,false
+            """.trimIndent(),
+        )
+
+        assertEquals(emptyList(), result.errors)
+        val channel = result.channels.single()
+        assertEquals(CanSignal.BRAKE, channel.canSignal)
+        assertEquals("can:brake", channel.addressLabel)
+        assertEquals(channel, CustomTelemetryChannelParser.parse(channel.toConfigLine()).channels.single())
+    }
+
+    @Test
+    fun rejectsUnknownCanSignals() {
+        val result = CustomTelemetryChannelParser.parse("Analog 9,Steering,,can:steering,1,1,0,Fast,false")
+
+        assertTrue(result.channels.isEmpty())
+        assertTrue(result.errors.single().contains("Unknown CAN signal: steering"))
     }
 }

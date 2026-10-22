@@ -31,6 +31,7 @@ import com.utopia.racechronobridge.ble.BleScanDevice
 import com.utopia.racechronobridge.background.BridgeForegroundService
 import com.utopia.racechronobridge.background.BridgeRuntime
 import com.utopia.racechronobridge.background.BridgeRuntimeState
+import com.utopia.racechronobridge.background.AcquisitionMode
 import com.utopia.racechronobridge.background.BridgeRuntimeStore
 import com.utopia.racechronobridge.background.StepState
 import com.utopia.racechronobridge.background.StepStatus
@@ -74,6 +75,7 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
     private lateinit var customChannelInput: EditText
     private lateinit var customChannelsLayout: LinearLayout
     private lateinit var tcpToggleButton: TextView
+    private lateinit var acquisitionLayout: LinearLayout
     private lateinit var logView: TextView
     private var detailsExpanded = false
 
@@ -139,6 +141,9 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
         updateTelemetryValues(state.telemetry)
         renderCapture(state)
         tcpToggleButton.text = if (state.tcpStatus.running) "TCP サーバーを止める" else "TCP サーバーを開始"
+        if (previous.acquisitionMode != state.acquisitionMode || acquisitionLayout.childCount == 0) {
+            renderAcquisitionMode(state.acquisitionMode)
+        }
         if (detailsExpanded) {
             refreshLog()
         }
@@ -222,6 +227,9 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
         root.addView(connectionButton, fullWidthParams(top = 10))
         devicesLayout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(devicesLayout)
+        root.addView(sectionHint("取得方法"), fullWidthParams(top = 14))
+        acquisitionLayout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        root.addView(acquisitionLayout, fullWidthParams(top = 6))
         root.addView(
             caption(
                 "RaceChrono 側の設定: 他のデバイス → RaceChrono DIY → TCP/IP " +
@@ -285,7 +293,7 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
 
     private fun buildConnectionCard(): View {
         adapterStep = stepRow("アダプタ")
-        ecuStep = stepRow("ECU（SSM2）")
+        ecuStep = stepRow("ECU")
         raceChronoStep = stepRow("RaceChrono")
         return card {
             addView(adapterStep.view)
@@ -359,7 +367,8 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
         )
         container.addView(
             row(
-                secondaryButton("標準セットを読み込む") { loadStandardTuningPreset() } to 2f,
+                secondaryButton("チューニング用") { loadPreset(StandardSsm2Preset.tuningPresetCsv) } to 1f,
+                secondaryButton("CAN 信号") { loadPreset(StandardSsm2Preset.canSignalPresetCsv) } to 1f,
                 secondaryButton("すべて削除") { clearCustomChannels() } to 1f,
             ),
             fullWidthParams(top = 8),
@@ -454,6 +463,26 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
             )
         connectionButton.isEnabled = enabled
         connectionButton.alpha = if (enabled) 1f else 0.5f
+    }
+
+    private fun renderAcquisitionMode(selected: AcquisitionMode) {
+        acquisitionLayout.removeAllViews()
+        acquisitionLayout.addView(
+            segmentedControl(
+                options = ACQUISITION_OPTIONS.map { (mode, label) -> label to (mode == selected) },
+            ) { index -> runtime.setAcquisitionMode(ACQUISITION_OPTIONS[index].first) },
+        )
+        acquisitionLayout.addView(
+            caption(
+                when (selected) {
+                    AcquisitionMode.CAN ->
+                        "回転数・車速・ギア・アクセル・水温は車内の CAN 信号から 20 回/秒で取得します。" +
+                            "ブーストなど残りの項目は、1.5 秒ごとに SSM2 で読みます。"
+                    AcquisitionMode.SSM2 -> "すべての項目を SSM2 で 1 つずつ問い合わせます（1 秒に数回）。"
+                },
+            ),
+            fullWidthParams(top = 6),
+        )
     }
 
     private fun raceChronoStatus(status: RaceChronoTcpStatus): StepStatus = when {
@@ -602,7 +631,9 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
             return OFF_LABEL to ""
         }
         val value = telemetry.customValues[channel.id] ?: return NO_VALUE to channel.unit
-        return "%.2f".format(Locale.US, value) to channel.unit
+        // Switch-like CAN signals are 0/1, so drop the decimals for whole numbers.
+        val text = if (value % 1.0 == 0.0) "%.0f".format(Locale.US, value) else "%.2f".format(Locale.US, value)
+        return text to channel.unit
     }
 
     private fun renderChannelSettings() {
@@ -699,23 +730,31 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
     private fun modeSelector(
         selectedMode: ChannelMode,
         onModeSelected: (ChannelMode) -> Unit,
+    ): View = segmentedControl(
+        options = MODE_SELECTOR_ORDER.map { mode -> modeLabel(mode) to (mode == selectedMode) },
+        textSize = 12f,
+    ) { index -> onModeSelected(MODE_SELECTOR_ORDER[index]) }
+
+    private fun segmentedControl(
+        options: List<Pair<String, Boolean>>,
+        textSize: Float = 13f,
+        onSelected: (Int) -> Unit,
     ): View {
         return LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             background = rounded(COLOR_SURFACE_RAISED)
             setPadding(2.dp(), 2.dp(), 2.dp(), 2.dp())
-            MODE_SELECTOR_ORDER.forEach { mode ->
-                val active = selectedMode == mode
+            options.forEachIndexed { index, (label, active) ->
                 addView(
                     TextView(context).apply {
-                        text = modeLabel(mode)
-                        textSize = 12f
+                        text = label
+                        this.textSize = textSize
                         gravity = Gravity.CENTER
                         setPadding(0, 7.dp(), 0, 7.dp())
                         setTextColor(if (active) Color.WHITE else COLOR_TEXT_MUTED)
                         background = if (active) rounded(COLOR_ACCENT, radius = 8f) else pressable(Color.TRANSPARENT)
                         isClickable = true
-                        setOnClickListener { if (!active) onModeSelected(mode) }
+                        setOnClickListener { if (!active) onSelected(index) }
                     },
                     LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
                 )
@@ -838,8 +877,8 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
         }
     }
 
-    private fun loadStandardTuningPreset() {
-        customChannelInput.setText(StandardSsm2Preset.tuningPresetCsv)
+    private fun loadPreset(csv: String) {
+        customChannelInput.setText(csv)
         customChannelInput.setSelection(customChannelInput.text.length)
         importCustomChannelsFromInput()
     }
@@ -1281,6 +1320,10 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
             CaptureMarker("その他", "mark"),
         )
         private val MODE_SELECTOR_ORDER = listOf(ChannelMode.OFF, ChannelMode.SLOW, ChannelMode.FAST)
+        private val ACQUISITION_OPTIONS = listOf(
+            AcquisitionMode.CAN to "CAN 受信 + SSM2",
+            AcquisitionMode.SSM2 to "SSM2 のみ",
+        )
 
         private fun modeLabel(mode: ChannelMode): String = when (mode) {
             ChannelMode.OFF -> "送らない"

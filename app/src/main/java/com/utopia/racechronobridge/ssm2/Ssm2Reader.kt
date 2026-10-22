@@ -19,7 +19,7 @@ class Ssm2Reader(
             .forEach { channel -> telemetry = readChannel(channel, telemetry) }
 
         customChannels
-            .filter { channel -> channel.mode == ChannelMode.FAST }
+            .filter { channel -> channel.mode == ChannelMode.FAST && channel.canSignal == null }
             .forEach { channel -> telemetry = readCustomChannel(channel, telemetry) }
 
         repeat(SLOW_READS_PER_CYCLE) {
@@ -112,7 +112,7 @@ class Ssm2Reader(
         telemetry: SubaruTelemetry,
     ): SubaruTelemetry {
         val rawValue = readCustomRawValue(channel)
-        val value = channel.convert(rawValue)
+        val value = channel.convert(rawValue.toDouble())
         return telemetry.copy(customValues = telemetry.customValues + (channel.id to value))
     }
 
@@ -139,7 +139,7 @@ class Ssm2Reader(
             .filter { channel -> channelModes.modeFor(channel) == ChannelMode.SLOW }
             .map { channel -> ReadTarget.BuiltIn(channel) } +
             customChannels
-                .filter { channel -> channel.mode == ChannelMode.SLOW }
+                .filter { channel -> channel.mode == ChannelMode.SLOW && channel.canSignal == null }
                 .map { channel -> ReadTarget.Custom(channel) }
         if (slowTargets.isEmpty()) {
             return null

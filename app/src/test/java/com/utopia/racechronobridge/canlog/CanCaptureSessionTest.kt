@@ -1,5 +1,6 @@
 package com.utopia.racechronobridge.canlog
 
+import com.utopia.racechronobridge.canbus.MonitorLine
 import com.utopia.racechronobridge.elm.Elm327Transport
 import java.io.StringWriter
 import kotlin.test.Test

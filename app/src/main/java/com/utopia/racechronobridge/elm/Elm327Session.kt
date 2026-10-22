@@ -10,14 +10,18 @@ class Elm327Session(
     private val parser = ElmResponseParser()
 
     fun initialize() {
-        INITIAL_COMMANDS.forEach { command ->
+        configure(INITIAL_COMMANDS)
+        onLog("ELM327 initialized for SSM2 over CAN.")
+    }
+
+    fun configure(commands: List<String>) {
+        commands.forEach { command ->
             val raw = client.sendCommand(command, timeoutMillis = 4_000)
             onRawResponse("$command -> ${raw.trim()}")
             if (parser.isElmError(raw)) {
                 error("ELM command failed: $command response=${raw.trim()}")
             }
         }
-        onLog("ELM327 initialized for SSM2 over CAN.")
     }
 
     fun readByte(parameter: Ssm2Parameter): Int {

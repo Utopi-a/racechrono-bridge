@@ -1,5 +1,6 @@
 package com.utopia.racechronobridge.canlog
 
+import com.utopia.racechronobridge.canbus.MonitorLine
 import java.io.Writer
 
 /**

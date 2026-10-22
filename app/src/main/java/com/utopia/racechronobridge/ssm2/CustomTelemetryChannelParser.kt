@@ -1,5 +1,6 @@
 package com.utopia.racechronobridge.ssm2
 
+import com.utopia.racechronobridge.canbus.CanSignal
 import java.util.Locale
 
 data class CustomTelemetryImportResult(
@@ -68,14 +69,16 @@ object CustomTelemetryChannelParser {
         val rc3Field = normalizeRc3Field(required("slot", "rc3field", "field", "rc3"))
         val label = required("label", "name")
         val unit = value("unit").orEmpty()
-        val address = parseAddress(value("address") ?: value("addr") ?: value("command").orEmpty())
+        val rawAddress = value("address") ?: value("addr") ?: value("command").orEmpty()
+        val canSignal = parseCanSignal(rawAddress)
+        val address = if (canSignal != null) 0 else parseAddress(rawAddress)
         val bytes = value("bytes", "size")?.toIntOrNull() ?: 1
         val scale = value("scale", "multiplier", "multiply")?.toDoubleOrNull() ?: 1.0
         val offset = value("offset", "add")?.toDoubleOrNull() ?: 0.0
         val mode = parseMode(value("mode") ?: ChannelMode.SLOW.name)
         val signed = value("signed")?.toBooleanStrictOrNull() ?: false
         val id = value("id")?.takeIf { it.isNotBlank() }
-            ?: listOf(rc3Field, label, address.toString(16)).joinToString("_")
+            ?: listOf(rc3Field, label, canSignal?.key ?: address.toString(16)).joinToString("_")
                 .lowercase(Locale.US)
                 .replace(Regex("[^a-z0-9]+"), "_")
                 .trim('_')
@@ -91,7 +94,18 @@ object CustomTelemetryChannelParser {
             offset = offset,
             mode = mode,
             signed = signed,
+            canSignal = canSignal,
         )
+    }
+
+    private fun parseCanSignal(raw: String): CanSignal? {
+        val trimmed = raw.trim()
+        if (!trimmed.startsWith(CustomTelemetryChannel.CAN_ADDRESS_PREFIX, ignoreCase = true)) {
+            return null
+        }
+        val key = trimmed.substring(CustomTelemetryChannel.CAN_ADDRESS_PREFIX.length)
+        return CanSignal.fromKey(key)
+            ?: error("Unknown CAN signal: $key (use ${CanSignal.entries.joinToString { it.key }})")
     }
 
     private fun Map<String, String>.required(vararg keys: String): String {

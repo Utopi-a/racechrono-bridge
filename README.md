@@ -59,6 +59,46 @@ SSM2 value handling is aligned with public RomRaider Subaru logger definitions. 
 6. Connect RaceChrono DIY TCP/IP to `127.0.0.1:9876`.
 7. Enable `RC2/RC3`; keep `NMEA 0183` off.
 
+## Acquisition Modes
+
+`取得方法` in the connection section switches between two modes. The choice is saved.
+
+- `CAN 受信 + SSM2` (default): reads the GH8 CAN broadcast on the OBD port with `ATMA` and publishes to RaceChrono at 20 Hz. Every 1.5 s the app switches the adapter to SSM2 (`ATH0`, `ATCAF1`), reads the channels the broadcast does not carry, and switches back (`ATH1`, `ATCAF0`). When every SSM2 channel is off, `ATMA` runs without interruption.
+- `SSM2 のみ`: the original request/response polling for every channel.
+
+Built-in channels taken from CAN in `CAN 受信 + SSM2` mode: RPM, Gear, Vehicle speed, Accelerator, Coolant.
+
+GH8 broadcast layout (from a 5-minute drive capture; IDs are 11-bit, bytes are B0-B7):
+
+| Signal | ID / bytes | Decoding | Confidence |
+|---|---|---|---|
+| RPM | `410` B5 low, B6 high | rpm | high |
+| Accelerator | `410` B4 | raw × 0.8 % (100 % assumed at 0x7D) | signal high, scale estimated |
+| Gear | `411` B4 | 1-5; 6 = neutral or clutch pressed (sent blank) | high |
+| Clutch switch | `411` B0 bit `0x40` or `0x80` | 1 = pressed | high |
+| Brake switch | `411` B6 bit `0x10` (also `512` B4) | 1 = pressed | high |
+| Vehicle speed | `512` B2 low, B3 high | raw × 0.05625 km/h | signal high, scale estimated |
+| Wheel speeds 1-4 | `513` B0-1, B2-3, B4-5, B6-7 | raw × 0.05625 km/h; which wheel is which is unknown | signal high, scale estimated |
+| Handbrake | `514` B0 bit `0x04` | 1 = applied | medium |
+| Coolant | `600` B3 | raw − 40 °C | medium |
+
+Not yet verified: the "estimated" scales were inferred from one drive without a reference reading, and the "medium" signals were matched by timing only. Compare them with SSM2 values (vehicle speed, accelerator, coolant) and with a marker capture (brake, clutch, handbrake) before relying on them.
+
+CAN-only signals can be placed on any RC3 slot as a custom channel with `can:<signal>` as the address. Supported signals: `rpm`, `speed`, `wheel1`-`wheel4`, `accelerator`, `brake`, `clutch`, `handbrake`, `gear`, `coolant`. The `CAN 信号` preset assigns:
+
+```csv
+slot,label,unit,address,bytes,scale,offset,mode,signed
+Analog 9,Brake,,can:brake,1,1,0,Fast,false
+Analog 10,Clutch,,can:clutch,1,1,0,Fast,false
+Analog 11,Wheel 1,km/h,can:wheel1,1,1,0,Fast,false
+Analog 12,Wheel 2,km/h,can:wheel2,1,1,0,Fast,false
+Analog 13,Wheel 3,km/h,can:wheel3,1,1,0,Fast,false
+Analog 14,Wheel 4,km/h,can:wheel4,1,1,0,Fast,false
+Analog 15,Handbrake,,can:handbrake,1,1,0,Fast,false
+```
+
+`scale` and `offset` apply on top of the decoded value. In `SSM2 のみ` mode, `can:` channels stay blank.
+
 ## CAN Capture
 
 `CAN capture` records the passive CAN broadcast on the OBD port with ELM327 `ATMA` and saves it as CSV, for working out which ID and byte carries pedal, switch, and gear signals. GH8 broadcasts frames such as `410`, `411`, `412`, `511`-`514`, `600`, `601`, and `620` on the OBD port.

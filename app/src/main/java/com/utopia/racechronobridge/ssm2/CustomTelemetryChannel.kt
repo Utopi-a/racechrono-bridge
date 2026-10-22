@@ -1,5 +1,6 @@
 package com.utopia.racechronobridge.ssm2
 
+import com.utopia.racechronobridge.canbus.CanSignal
 import java.util.Locale
 
 data class CustomTelemetryChannel(
@@ -13,6 +14,8 @@ data class CustomTelemetryChannel(
     val offset: Double,
     val mode: ChannelMode,
     val signed: Boolean,
+    /** When set, the value comes from the passive CAN broadcast instead of an SSM2 address. */
+    val canSignal: CanSignal? = null,
 ) {
     init {
         require(rc3Field in SUPPORTED_RC3_FIELDS) { "Unsupported RC3 field: $rc3Field" }
@@ -26,7 +29,8 @@ data class CustomTelemetryChannel(
         .filterNotNull()
         .joinToString(" ")
 
-    val addressLabel: String = "0x${address.toString(16).uppercase(Locale.US).padStart(6, '0')}"
+    val addressLabel: String = canSignal?.let { "$CAN_ADDRESS_PREFIX${it.key}" }
+        ?: "0x${address.toString(16).uppercase(Locale.US).padStart(6, '0')}"
 
     fun commandForByte(byteOffset: Int): String {
         require(byteOffset in 0 until bytes) { "byteOffset must be inside channel bytes" }
@@ -34,7 +38,7 @@ data class CustomTelemetryChannel(
         return "A8${byteAddress.toString(16).uppercase(Locale.US).padStart(8, '0')}"
     }
 
-    fun convert(rawValue: Int): Double = rawValue * scale + offset
+    fun convert(rawValue: Double): Double = rawValue * scale + offset
 
     fun toConfigLine(): String {
         return listOf(
@@ -52,6 +56,7 @@ data class CustomTelemetryChannel(
 
     companion object {
         val SUPPORTED_RC3_FIELDS = TelemetryChannel.entries.map { it.rc3Field }.toSet()
+        const val CAN_ADDRESS_PREFIX = "can:"
         private val ADDRESS_RANGE = 0..0xFFFFFF
     }
 }

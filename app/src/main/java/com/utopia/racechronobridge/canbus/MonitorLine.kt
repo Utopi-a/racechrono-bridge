@@ -1,4 +1,4 @@
-package com.utopia.racechronobridge.canlog
+package com.utopia.racechronobridge.canbus
 
 sealed interface MonitorLine {
     /** An 11-bit CAN frame printed by ELM327 ATMA with ATH1 and ATCAF0. */

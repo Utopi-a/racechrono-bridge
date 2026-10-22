@@ -11,4 +11,17 @@ object StandardSsm2Preset {
         Analog 14,A/F Sensor #1,AFR,0x000046,1,0.11484375,0,Slow,false
         Analog 15,Engine Load,%,0x000007,1,0.3921568627,0,Slow,false
         """.trimIndent()
+
+    /** Puts the GH8 CAN-only signals on the slots the tuning preset does not depend on most. */
+    val canSignalPresetCsv: String =
+        """
+        slot,label,unit,address,bytes,scale,offset,mode,signed
+        Analog 9,Brake,,can:brake,1,1,0,Fast,false
+        Analog 10,Clutch,,can:clutch,1,1,0,Fast,false
+        Analog 11,Wheel 1,km/h,can:wheel1,1,1,0,Fast,false
+        Analog 12,Wheel 2,km/h,can:wheel2,1,1,0,Fast,false
+        Analog 13,Wheel 3,km/h,can:wheel3,1,1,0,Fast,false
+        Analog 14,Wheel 4,km/h,can:wheel4,1,1,0,Fast,false
+        Analog 15,Handbrake,,can:handbrake,1,1,0,Fast,false
+        """.trimIndent()
 }

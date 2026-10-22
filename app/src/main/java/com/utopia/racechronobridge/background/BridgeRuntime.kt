@@ -11,6 +11,7 @@ import com.utopia.racechronobridge.ble.BleDeviceScanner
 import com.utopia.racechronobridge.ble.BleElmClient
 import com.utopia.racechronobridge.ble.BleScanDevice
 import com.utopia.racechronobridge.bluetooth.ClassicBluetoothElmClient
+import com.utopia.racechronobridge.canbus.CanTelemetrySession
 import com.utopia.racechronobridge.canlog.CanCaptureProgress
 import com.utopia.racechronobridge.canlog.CanCaptureSession
 import com.utopia.racechronobridge.canlog.CanCaptureWriter
@@ -37,6 +38,9 @@ import java.util.concurrent.TimeUnit
 
 enum class StepState { IDLE, WORKING, OK, FAILED }
 
+/** Where live telemetry comes from. CAN reads the GH8 broadcast and fills the rest with SSM2. */
+enum class AcquisitionMode { CAN, SSM2 }
+
 data class StepStatus(
     val state: StepState,
     val detail: String,
@@ -52,6 +56,7 @@ data class BridgeRuntimeState(
     val logs: List<String> = emptyList(),
     val capture: StepStatus = StepStatus(StepState.IDLE, "停止中"),
     val canCaptureFile: File? = null,
+    val acquisitionMode: AcquisitionMode = AcquisitionMode.CAN,
 )
 
 class BridgeRuntime(
@@ -92,6 +97,9 @@ class BridgeRuntime(
     private var realPollingTask: ScheduledFuture<*>? = null
 
     @Volatile
+    private var canTelemetrySession: CanTelemetrySession? = null
+
+    @Volatile
     private var canCaptureSession: CanCaptureSession? = null
 
     @Volatile
@@ -102,6 +110,14 @@ class BridgeRuntime(
 
     private var rc3Count = 0
     private var autoConnectAttempted = false
+
+    init {
+        val savedMode = preferences().getString(KEY_ACQUISITION_MODE, null)
+            ?.let { runCatching { AcquisitionMode.valueOf(it) }.getOrNull() }
+        if (savedMode != null) {
+            state = state.copy(acquisitionMode = savedMode)
+        }
+    }
 
     fun addListener(listener: Listener) {
         listeners.add(listener)
@@ -307,18 +323,38 @@ class BridgeRuntime(
         )
     }
 
-    fun startRealTelemetry() {
-        val reader = ssm2Reader
-        if (reader == null) {
-            appendLog("Initialize ELM327 before starting SSM2 polling.")
+    fun setAcquisitionMode(mode: AcquisitionMode) {
+        if (state.acquisitionMode == mode) {
             return
         }
-        if (realPollingTask != null) {
-            appendLog("SSM2 polling is already running.")
+        preferences().edit().putString(KEY_ACQUISITION_MODE, mode.name).apply()
+        val wasRunning = realPollingTask != null || canTelemetrySession != null
+        stopRealTelemetry()
+        updateState { copy(acquisitionMode = mode) }
+        appendLog("Acquisition mode changed to $mode.")
+        if (wasRunning) {
+            startRealTelemetry()
+        }
+    }
+
+    fun startRealTelemetry() {
+        val reader = ssm2Reader
+        val session = elmSession
+        val transport = elmTransport
+        if (reader == null || session == null || transport == null) {
+            appendLog("Initialize ELM327 before starting telemetry.")
+            return
+        }
+        if (realPollingTask != null || canTelemetrySession != null) {
+            appendLog("Telemetry is already running.")
             return
         }
 
         stopFakeTelemetry()
+        if (state.acquisitionMode == AcquisitionMode.CAN) {
+            startCanTelemetry(transport, session, reader)
+            return
+        }
         appendLog("Starting SSM2 polling.")
         updateState { copy(ecu = StepStatus(StepState.OK, "SSM2 で受信中")) }
         realPollingTask = pollExecutor.scheduleWithFixedDelay(
@@ -403,7 +439,40 @@ class BridgeRuntime(
         appendLog("Fake telemetry stopped.")
     }
 
+    private fun startCanTelemetry(transport: Elm327Transport, session: Elm327Session, reader: Ssm2Reader) {
+        val canSession = CanTelemetrySession(
+            transport = transport,
+            elmSession = session,
+            ssm2Reader = reader,
+            channelModes = { channelModes },
+            customChannels = { customChannels },
+            onTelemetry = ::publishTelemetry,
+            onLog = ::appendLog,
+        )
+        canTelemetrySession = canSession
+        updateState { copy(ecu = StepStatus(StepState.OK, "CAN 受信中（SSM2 は合間に取得）")) }
+        pollExecutor.execute {
+            try {
+                canSession.run()
+            } catch (error: Exception) {
+                appendLog("CAN telemetry failed: ${error.message}")
+                updateState { copy(ecu = StepStatus(StepState.FAILED, "CAN 受信が止まりました")) }
+            } finally {
+                if (canTelemetrySession === canSession) {
+                    canTelemetrySession = null
+                }
+            }
+        }
+    }
+
     private fun stopRealTelemetry() {
+        val canSession = canTelemetrySession
+        if (canSession != null) {
+            canSession.requestStop()
+            canTelemetrySession = null
+            updateState { copy(ecu = StepStatus(StepState.IDLE, "停止中")) }
+            appendLog("CAN telemetry stop requested.")
+        }
         val task = realPollingTask ?: return
         task.cancel(true)
         realPollingTask = null
@@ -504,5 +573,6 @@ class BridgeRuntime(
         private const val KEY_LAST_DEVICE_ADDRESS = "last_device_address"
         private const val KEY_LAST_DEVICE_NAME = "last_device_name"
         private const val CAN_CAPTURE_DIRECTORY = "can-captures"
+        private const val KEY_ACQUISITION_MODE = "acquisition_mode"
     }
 }
