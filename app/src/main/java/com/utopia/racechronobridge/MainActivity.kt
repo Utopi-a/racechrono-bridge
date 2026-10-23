@@ -88,8 +88,8 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
     private lateinit var loggerValuesLayout: LinearLayout
     private val loggerValueViews = mutableMapOf<String, TextView>()
 
-    /** 保存先の選択画面から戻ったときに書き出すファイル（CAN 記録・ロガー共通）。 */
-    private var pendingExportFile: File? = null
+    /** 版名の欄は画面を作った時点では保存値を知らない。最初の状態通知で一度だけ入れる。 */
+    private var loggerRomTagInitialized = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -152,6 +152,10 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
         lastTelemetry = state.telemetry
         updateTelemetryValues(state.telemetry)
         renderCapture(state)
+        if (!loggerRomTagInitialized) {
+            loggerRomTagInput.setText(state.loggerRomTag)
+            loggerRomTagInitialized = true
+        }
         renderLogger(state)
         if (previous.loggerPresetKey != state.loggerPresetKey || loggerPresetLayout.childCount == 0) {
             renderLoggerPreset(state.loggerPresetKey)
@@ -189,8 +193,9 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == CAN_CAPTURE_EXPORT_REQUEST || requestCode == LOGGER_EXPORT_REQUEST) {
-            if (resultCode == RESULT_OK) writePendingExport(data?.data)
-            pendingExportFile = null
+            // 保存先を選んでいる間に Activity が作り直されても、書き出すファイルは実行時の状態から引ける
+            val file = if (requestCode == CAN_CAPTURE_EXPORT_REQUEST) currentRuntimeState.canCaptureFile else currentRuntimeState.loggerFile
+            if (resultCode == RESULT_OK) writeExport(file, data?.data)
             return
         }
         if (requestCode != CUSTOM_CHANNEL_FILE_REQUEST || resultCode != RESULT_OK) {
@@ -366,7 +371,6 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
         loggerStep = stepRow("状態")
         loggerRomTagInput = EditText(this).apply {
             hint = "ROM の版名（例: mod3、revA）。ファイル名に入ります"
-            setText(currentRuntimeState.loggerRomTag)
             isSingleLine = true
             textSize = 14f
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
@@ -380,7 +384,11 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
             if (currentRuntimeState.logger.state == StepState.WORKING) {
                 runtime.stopLogging()
             } else {
-                runtime.setLoggerRomTag(loggerRomTagInput.text.toString())
+                val typed = loggerRomTagInput.text.toString()
+                if (BridgeRuntime.loggerFileTag(typed) == "rom") {
+                    showUserMessage("ROM の版名が空です。ファイル名は rom になります")
+                }
+                runtime.setLoggerRomTag(typed)
                 ensureBridgePermissions {
                     startBridgeForegroundService()
                     runtime.startLogging()
@@ -978,19 +986,17 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
             putExtra(Intent.EXTRA_TITLE, file.name)
         }
         runCatching {
-            pendingExportFile = file
             startActivityForResult(intent, requestCode)
         }.onFailure { error ->
-            pendingExportFile = null
             appendLog("Export picker failed: ${error.message}")
             showUserMessage("保存先の選択を開けませんでした")
         }
     }
 
-    private fun writePendingExport(uri: Uri?) {
-        val file = pendingExportFile
-        if (uri == null || file == null) {
-            appendLog("Export returned no destination.")
+    private fun writeExport(file: File?, uri: Uri?) {
+        if (uri == null || file == null || !file.isFile) {
+            appendLog("Export returned no destination or the file is gone.")
+            showUserMessage("CSV を保存できませんでした（ファイルが見つかりません）")
             return
         }
         runCatching {

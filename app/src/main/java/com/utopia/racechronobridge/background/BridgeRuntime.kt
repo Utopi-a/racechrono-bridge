@@ -33,6 +33,7 @@ import com.utopia.racechronobridge.ssm2.ChannelMode
 import com.utopia.racechronobridge.ssm2.CustomTelemetryChannel
 import com.utopia.racechronobridge.ssm2.FakeSubaruTelemetrySource
 import com.utopia.racechronobridge.ssm2.Ssm2Client
+import com.utopia.racechronobridge.ssm2.Ssm2Identification
 import com.utopia.racechronobridge.ssm2.Ssm2Reader
 import com.utopia.racechronobridge.ssm2.SubaruTelemetry
 import com.utopia.racechronobridge.ssm2.TelemetryChannel
@@ -45,6 +46,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 enum class StepState { IDLE, WORKING, OK, FAILED }
 
@@ -131,6 +133,10 @@ class BridgeRuntime(
 
     @Volatile
     private var loggerSession: LoggerSession? = null
+
+    /** 記録の準備中から終了までの停止の合図。準備中は loggerSession がまだ無いので、こちらで止める。 */
+    @Volatile
+    private var loggerStop: AtomicBoolean? = null
 
     /** RomRaider ロガー定義から作った SSM パラメータ表（assets）。最初に記録を始めたときに読む。 */
     private val catalog: SsmCatalog by lazy {
@@ -367,6 +373,9 @@ class BridgeRuntime(
         }
         val preset = LogPresets.byKey(state.loggerPresetKey) ?: LogPresets.FUEL
         val romTag = state.loggerRomTag
+        // 準備（再同期・ECU 識別）の途中でも止められるよう、停止の合図は先に作る
+        val stop = AtomicBoolean(false)
+        loggerStop = stop
         stopTelemetry()
         updateState {
             copy(
@@ -378,40 +387,54 @@ class BridgeRuntime(
         pollExecutor.execute {
             var writer: RomRaiderCsvWriter? = null
             try {
+                val client = Ssm2Client(transport)
+                // 止めた取得の応答が遅れて届いていても、ここで読み捨ててから始める
+                client.resynchronize()
                 // CAN 受信モードの後はヘッダー表示・自動整形が切り替わっているので、SSM2 用に戻す
                 session.configure(SSM2_COMMANDS)
-                val client = Ssm2Client(transport)
-                val ecuId = runCatching { client.identify().ecuId }.getOrElse { error ->
-                    appendLog("ECU identification failed (${error.message}); using $DEFAULT_ECU_ID.")
-                    DEFAULT_ECU_ID
-                }
+                if (stop.get()) throw LoggingCancelled()
+                val identification = identifyEcu(client)
+                if (stop.get()) throw LoggingCancelled()
+                val ecuId = identification?.ecuId ?: DEFAULT_ECU_ID
                 if (ecuId !in catalog.ecuIds()) {
                     appendLog("ECU ID $ecuId has no extended parameters in the catalog; only standard parameters are logged.")
                 }
-                val layout = LogLayout.resolve(preset, catalog.forEcu(ecuId))
-                if (layout.missing.isNotEmpty()) {
-                    appendLog("Not available for ECU $ecuId: ${layout.missing.joinToString()}")
-                }
-                val file = newLoggerFile(preset, romTag)
+                val available = catalog.forEcu(ecuId)
+                // ECU が対応していない標準パラメータは、返ってきたバイトに意味が無いので記録しない
+                val unsupported = identification?.let { id ->
+                    available.values.filter { p -> p.capability?.isSupportedBy(id.bytes) == false }.map { it.id }.toSet()
+                }.orEmpty()
+                val layout = LogLayout.resolve(preset, available - unsupported)
+                val notSupported = layout.missing.filter { it in unsupported }
+                val notInCatalog = layout.missing.filterNot { it in unsupported }
+                if (notSupported.isNotEmpty()) appendLog("Not supported by ECU $ecuId: ${notSupported.joinToString()}")
+                if (notInCatalog.isNotEmpty()) appendLog("Not in catalog for ECU $ecuId: ${notInCatalog.joinToString()}")
+                val file = newLoggerFile(preset, romTag, ecuVerified = identification != null)
                 writer = RomRaiderCsvWriter(file.bufferedWriter(), layout)
                 val logger = LoggerSession(
                     client = client,
                     layout = layout,
                     writer = writer,
-                    onRecord = { record, stats -> onLoggerRecord(layout, record, stats) },
+                    clock = SystemClock::elapsedRealtime,
+                    onRecord = { record, stats -> onLoggerRecord(layout, record, stats, ecuVerified = identification != null) },
                     onLog = ::appendLog,
                 )
                 loggerSession = logger
-                appendLog("Logging ECU $ecuId preset ${preset.key} to ${file.absolutePath}")
+                if (stop.get()) logger.requestStop()
+                appendLog("Logging ECU $ecuId${if (identification == null) " (unverified)" else ""} preset ${preset.key} to ${file.absolutePath}")
                 updateState { copy(logger = StepStatus(StepState.WORKING, "記録中"), loggerFile = file) }
                 logger.run()
                 updateState { copy(logger = StepStatus(StepState.OK, "保存済み ${file.name}")) }
+            } catch (cancelled: LoggingCancelled) {
+                updateState { copy(logger = StepStatus(StepState.IDLE, "開始前に止めました")) }
+                appendLog("Logging cancelled before recording started.")
             } catch (error: Exception) {
                 updateState { copy(logger = StepStatus(StepState.FAILED, "失敗: ${error.message}")) }
                 appendLog("Logging failed: ${error.message}")
             } finally {
                 writer?.close()
                 loggerSession = null
+                if (loggerStop === stop) loggerStop = null
             }
             if (elmTransport === transport) {
                 appendLog("Restoring telemetry after logging.")
@@ -420,11 +443,28 @@ class BridgeRuntime(
         }
     }
 
+    /** ECU ID と対応フラグを読む。失敗したら通信を立て直して 1 回だけやり直し、それでも駄目なら null。 */
+    private fun identifyEcu(client: Ssm2Client): Ssm2Identification? {
+        repeat(2) { attempt ->
+            try {
+                return client.identify()
+            } catch (error: Exception) {
+                appendLog("ECU identification failed (attempt ${attempt + 1}): ${error.message}")
+                runCatching { client.resynchronize() }
+            }
+        }
+        appendLog("Using ECU ID $DEFAULT_ECU_ID without verification; file name is tagged ecu-unverified.")
+        return null
+    }
+
     fun stopLogging() {
+        loggerStop?.set(true)
         loggerSession?.requestStop()
     }
 
-    private fun isLogging(): Boolean = loggerSession != null || state.logger.state == StepState.WORKING
+    private class LoggingCancelled : Exception("cancelled")
+
+    private fun isLogging(): Boolean = loggerSession != null || loggerStop != null || state.logger.state == StepState.WORKING
 
     fun markCanCapture(label: String) {
         val writer = canCaptureWriter
@@ -617,7 +657,9 @@ class BridgeRuntime(
             appendLog("CAN telemetry stop requested.")
         }
         val task = realPollingTask ?: return
-        task.cancel(true)
+        // 送信中の SSM2 要求に割り込むと、その応答が次の要求（記録の準備など）の応答として届いて対応がずれる。
+        // 単一スレッドなので、今の 1 周を終えてから次の作業が始まる
+        task.cancel(false)
         realPollingTask = null
         updateState { copy(ecu = StepStatus(StepState.IDLE, "停止中")) }
         appendLog("SSM2 polling stopped.")
@@ -631,21 +673,23 @@ class BridgeRuntime(
         return File(directory, "can-$timestamp.csv")
     }
 
-    private fun newLoggerFile(preset: LogPreset, romTag: String): File {
+    private fun newLoggerFile(preset: LogPreset, romTag: String, ecuVerified: Boolean): File {
         val directory = appContext.getExternalFilesDir(LOGGER_DIRECTORY) ?: File(appContext.filesDir, LOGGER_DIRECTORY)
         directory.mkdirs()
         val timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"))
-        val tag = romTag.replace(Regex("[^A-Za-z0-9_-]"), "").ifBlank { "rom" }
-        return File(directory, "romraiderlog_${timestamp}_${preset.key}_$tag.csv")
+        val tag = loggerFileTag(romTag)
+        val suffix = if (ecuVerified) "" else "_ecu-unverified"
+        return File(directory, "romraiderlog_${timestamp}_${preset.key}_$tag$suffix.csv")
     }
 
-    private fun onLoggerRecord(layout: LogLayout, record: LogRecord, stats: LoggerStats) {
+    private fun onLoggerRecord(layout: LogLayout, record: LogRecord, stats: LoggerStats, ecuVerified: Boolean) {
         publishTelemetry(lastTelemetry.updatedWith(record, System.currentTimeMillis()))
         val values = layout.columns.map { c ->
             LoggerValue(c.header, record.values[c.id]?.let(c.conversion::formatValue) ?: "-")
         } + layout.derived.map { d -> LoggerValue(d.header, record.derived[d]?.let(d::format) ?: "-") }
         val detail = "記録中  ${"%,d".format(stats.samples)} 件 / ${"%.1f".format(stats.samplesPerSecond)} 回/秒 / " +
-            "要求 ${stats.requestsPerSample} 回" + if (stats.failures > 0) " / 失敗 ${stats.failures}" else ""
+            "要求 ${stats.requestsPerSample} 回" + (if (stats.failures > 0) " / 失敗 ${stats.failures}" else "") +
+            (if (stats.degraded) " / ブロック読み出し停止中" else "") + (if (!ecuVerified) " / ECU 未確認" else "")
         updateState { copy(logger = StepStatus(StepState.WORKING, detail), loggerValues = values) }
     }
 
@@ -739,6 +783,9 @@ class BridgeRuntime(
         private const val KEY_LOGGER_ROM_TAG = "logger_rom_tag"
         private const val LOGGER_DIRECTORY = "logs"
         private const val CATALOG_ASSET = "ssm_catalog.tsv"
+
+        /** ファイル名に入れる版名。文字（日本語を含む）・数字・_・- 以外は除く。空なら rom。 */
+        fun loggerFileTag(romTag: String): String = romTag.replace(Regex("[^\\p{L}\\p{N}_-]"), "").ifBlank { "rom" }
 
         /** ECU 識別に失敗したときに使う ECU ID（GH8 の A2TB100U）。 */
         private const val DEFAULT_ECU_ID = "5104584007"

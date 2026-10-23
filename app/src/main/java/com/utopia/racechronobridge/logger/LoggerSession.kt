@@ -9,6 +9,8 @@ data class LoggerStats(
     val samplesPerSecond: Double,
     val requestsPerSample: Int,
     val failures: Long,
+    /** ブロック読み出しを A8 に切り替えた箇所があり、遅くなっている。 */
+    val degraded: Boolean,
 ) {
     companion object {
         const val RATE_WINDOW = 20
@@ -18,14 +20,16 @@ data class LoggerStats(
 /**
  * プリセットの列を SSM2 で読み続け、CSV に書く。止めるまで待ち時間なしで読む（速さは往復の回数で決まる）。
  *
- * 1 回の読み出し失敗では止めず、[MAX_CONSECUTIVE_FAILURES] 回続いたら例外で終わる。
- * 変化の遅い列は [SLOW_EVERY] 回に 1 回読み、その間は前回値を CSV に書く。
+ * - 失敗したら、遅れて届く応答を読み捨てて通信を立て直してから続ける（要求と応答が 1 つずれたまま記録しないため）
+ * - 失敗が [MAX_CONSECUTIVE_FAILURES] 回続いたら例外で終わる
+ * - 変化の遅い列は [SLOW_EVERY] 回に 1 回読み、その間は前回値を書く。遅い列の失敗では速い列を止めない
  */
 class LoggerSession(
-    client: Ssm2Client,
+    private val client: Ssm2Client,
     private val layout: LogLayout,
     private val writer: RomRaiderCsvWriter,
-    private val clock: () -> Long = System::currentTimeMillis,
+    /** 経過時間の基準。壁時計の補正で飛ばないよう、実機では SystemClock.elapsedRealtime を渡す。 */
+    private val clock: () -> Long = { System.nanoTime() / 1_000_000 },
     private val onRecord: (LogRecord, LoggerStats) -> Unit = { _, _ -> },
     private val onLog: (String) -> Unit = {},
 ) {
@@ -46,30 +50,43 @@ class LoggerSession(
         var samples = 0L
         var failures = 0L
         var consecutiveFailures = 0
+        var slowDue = true
         val slowBytes = HashMap<Int, Int>()
         val recentTimes = ArrayDeque<Long>()
         onLog("Logger started: preset ${layout.preset.key} ${layout.columns.size} columns, fast plan ${fast.plan.size} requests" +
             (slow?.let { ", slow plan ${it.plan.size} requests every $SLOW_EVERY samples" } ?: ""))
         while (!stopRequested) {
-            try {
-                var requests = 0
-                if (slow != null && samples % SLOW_EVERY == 0L) {
+            var requests = 0
+            if (slow != null && slowDue) {
+                try {
                     val s = slow.sample()
                     slowBytes.putAll(s.bytes)
                     requests += s.requests
+                    slowDue = false
+                } catch (error: Exception) {
+                    if (error is InterruptedException) throw error
+                    failures++
+                    onLog("Logger slow sample failed: ${error.message}")
+                    resynchronizeQuietly()
+                    // 遅い列は前回値のまま、速い列の記録を続ける。次の周期で読み直す
                 }
+            }
+            try {
                 val f = fast.sample()
                 requests += f.requests
                 val now = clock()
-                val record = layout.decode(f.bytes + slowBytes, elapsedMillis = now - started)
+                // 同じアドレスなら、今回読んだ速い列の値を優先する
+                val record = layout.decode(slowBytes + f.bytes, elapsedMillis = now - started)
                 writer.write(record)
                 samples++
+                if (samples % SLOW_EVERY == 0L) slowDue = true
                 consecutiveFailures = 0
                 recentTimes.addLast(now)
                 if (recentTimes.size > LoggerStats.RATE_WINDOW) recentTimes.removeFirst()
                 val span = recentTimes.last() - recentTimes.first()
                 val rate = if (recentTimes.size > 1 && span > 0) (recentTimes.size - 1) * 1000.0 / span else 0.0
-                onRecord(record, LoggerStats(samples, rate, requests, failures))
+                val degraded = fast.degraded || slow?.degraded == true
+                onRecord(record, LoggerStats(samples, rate, requests, failures, degraded))
                 if (now - lastFlush >= FLUSH_INTERVAL_MILLIS) {
                     writer.flush()
                     lastFlush = now
@@ -85,10 +102,15 @@ class LoggerSession(
                     writer.flush()
                     throw IllegalStateException("logger stopped after $consecutiveFailures consecutive failures: ${error.message}", error)
                 }
+                resynchronizeQuietly()
             }
         }
         writer.flush()
         onLog("Logger stopped after $samples samples ($failures failures).")
+    }
+
+    private fun resynchronizeQuietly() {
+        runCatching { client.resynchronize() }.onFailure { onLog("Resync failed: ${it.message}") }
     }
 
     companion object {

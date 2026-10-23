@@ -37,10 +37,28 @@ class LogPresetsTest {
     }
 
     @Test
-    fun fuelPresetAddsInjectorDutyAndCalculatedLoad() {
+    fun fuelPresetAddsInjectorDutyBoostAndCalculatedLoad() {
         val layout = LogLayout.resolve(LogPresets.FUEL, GH8)
-        assertEquals(listOf(DerivedColumn.INJECTOR_DUTY, DerivedColumn.ENGINE_LOAD), layout.derived)
+        assertEquals(listOf(DerivedColumn.INJECTOR_DUTY, DerivedColumn.MANIFOLD_RELATIVE, DerivedColumn.ENGINE_LOAD), layout.derived)
         assertTrue("A/F Sensor #1 (2-byte)** (estimated AFR)" in layout.headers)
+        assertTrue("A/F Sensor #1 (AFR)" in layout.headers)
+    }
+
+    @Test
+    fun boostPresetHasActualAndTargetOnTheSameAtmosphericBasis() {
+        val layout = LogLayout.resolve(LogPresets.BOOST, GH8)
+        assertTrue(DerivedColumn.MANIFOLD_RELATIVE in layout.derived)
+        assertTrue(DerivedColumn.TARGET_BOOST_RELATIVE in layout.derived)
+        // gh8-ecu-tuning の解析ツールは列名の前方一致で探す
+        assertTrue(layout.headers.any { it.startsWith("Manifold Relative") })
+        assertTrue(layout.headers.any { it.startsWith("Target Boost Relative") })
+    }
+
+    @Test
+    fun wideOpenThrottleIsJudgedWithP13() {
+        LogPresets.all.filter { it.key != "D" }.forEach { preset ->
+            assertTrue(preset.parameters.any { it.id == "P13" }, preset.key)
+        }
     }
 
     @Test
@@ -54,6 +72,12 @@ class DerivedColumnTest {
     @Test
     fun injectorDutyIsPulseWidthTimesRpmOver1200() {
         assertEquals(91.5, DerivedColumn.INJECTOR_DUTY.compute(mapOf("P21" to 16.8, "P8" to 6535.7))!!, 0.1)
+    }
+
+    @Test
+    fun boostFromMapIsNotCappedAt127Kpa() {
+        // 1.2 bar の跳ね: MAP 222 kPa 絶対、大気圧 101 kPa
+        assertEquals(121.0, DerivedColumn.MANIFOLD_RELATIVE.compute(mapOf("E88" to 222.0, "P24" to 101.0))!!, 1e-9)
     }
 
     @Test
@@ -80,6 +104,14 @@ class RomRaiderCsvWriterTest {
         )
         assertEquals("250,3000,-1.41,5.12,,,", lines[1])
     }
+
+    @Test
+    fun nonFiniteValuesAreWrittenAsBlanks() {
+        val layout = LogLayout.resolve(LogPreset("T", "t", "t", listOf(LogParameterRef("E124", units = "estimated AFR"))), GH8)
+        val out = StringWriter()
+        RomRaiderCsvWriter(out, layout).write(LogRecord(0, mapOf("E124" to Double.POSITIVE_INFINITY), emptyMap()))
+        assertEquals("0,", out.toString().trim())
+    }
 }
 
 class LoggerSessionTest {
@@ -87,10 +119,12 @@ class LoggerSessionTest {
         put(0x0E, 0x66); put(0x0F, 0x18) // 6534 rpm
         put(0x13, 0x60); put(0x14, 0x2C) // MAF 246.20 g/s
         put(0x20, 0x42) // IPW 16.896 ms
-        put(0x24, 0xEF) // MRP 111 kPa
+        put(0x15, 0xFF) // throttle 100 %
+        put(0x23, 101) // 大気圧 101 kPa
         put(0x12, 0x3C) // IAT 20 C
         put(0x08, 0x7C) // coolant 84 C
         (0xFF7080..0xFF70D0).forEach { put(it, 0x40) }
+        put(0xFF70AE, 0x06); put(0xFF70AF, 0x36) // MAP 1590 × 0.1333224 = 212.0 kPa 絶対
     }
 
     @Test
@@ -114,12 +148,35 @@ class LoggerSessionTest {
         assertEquals(13, lines.size)
         val first = records.first()
         assertEquals(6534.0, first.values.getValue("P8"))
-        assertEquals(111.0, first.values.getValue("P25"))
+        assertEquals(111.0, first.derived.getValue(DerivedColumn.MANIFOLD_RELATIVE), 0.05)
+        assertEquals(100.0, first.values.getValue("P13"))
         assertEquals(20.0, first.values.getValue("P11"))
         assertEquals(92.0, first.derived.getValue(DerivedColumn.INJECTOR_DUTY), 0.1)
         // 温度（遅い列）は 12 件の記録で 2 回だけ読む
         assertEquals(2, transport.sent.count { it == "A800000012" })
         assertTrue(records.all { "P2" in it.values })
+    }
+
+    @Test
+    fun slowColumnFailureDoesNotStopFastColumnsAndResynchronizes() {
+        val ecu = FakeEcu(memory)
+        var coolantFailures = 1
+        val transport = ScriptedElmTransport { command ->
+            if (command == "A800000008" && coolantFailures-- > 0) "NO DATA\r>" else ecu.respond(command)
+        }
+        val layout = LogLayout.resolve(LogPresets.FUEL, GH8)
+        val records = mutableListOf<LogRecord>()
+        lateinit var session: LoggerSession
+        session = LoggerSession(
+            client = Ssm2Client(transport),
+            layout = layout,
+            writer = RomRaiderCsvWriter(StringWriter(), layout),
+            onRecord = { r, _ -> records += r; if (records.size == 3) session.requestStop() },
+        )
+        session.run()
+        assertEquals(3, records.size)
+        assertTrue("ATE0" in transport.sent, "resync after the failed slow read")
+        assertTrue(records.last().values.containsKey("P2"), "slow column read again on a later cycle")
     }
 
     @Test
@@ -144,5 +201,7 @@ class LogRecordTelemetryTest {
         assertEquals(3, after.gear)
         assertEquals(13.9, after.batteryVoltage)
         assertEquals(0, before.updatedWith(LogRecord(0, mapOf("P60" to 256.0), emptyMap()), 0).gear)
+        val boosted = before.updatedWith(LogRecord(0, emptyMap(), mapOf(DerivedColumn.MANIFOLD_RELATIVE to 121.0)), 0)
+        assertEquals(121.0, boosted.boostKpa)
     }
 }

@@ -10,7 +10,7 @@ fun SubaruTelemetry.updatedWith(record: LogRecord, timestampMillis: Long): Subar
     val v = record.values
     return copy(
         rpm = v["P8"] ?: rpm,
-        boostKpa = v["P25"] ?: boostKpa,
+        boostKpa = record.derived[DerivedColumn.MANIFOLD_RELATIVE] ?: v["P25"] ?: boostKpa,
         coolantC = v["P2"] ?: coolantC,
         throttlePercent = v["P13"] ?: v["E93"] ?: throttlePercent,
         acceleratorPercent = v["P30"] ?: acceleratorPercent,

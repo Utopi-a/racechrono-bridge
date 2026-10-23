@@ -19,8 +19,9 @@ class RomRaiderCsvWriter(
     fun write(record: LogRecord) {
         val cells = ArrayList<String>(layout.headers.size + 1)
         cells += record.elapsedMillis.toString()
-        layout.columns.forEach { c -> cells += record.values[c.id]?.let(c.conversion::formatValue).orEmpty() }
-        layout.derived.forEach { d -> cells += record.derived[d]?.let(d::format).orEmpty() }
+        // 生値 0 の割り算などで出る Infinity・NaN は、値として書かず空欄にする
+        layout.columns.forEach { c -> cells += record.values[c.id]?.takeIf { it.isFinite() }?.let(c.conversion::formatValue).orEmpty() }
+        layout.derived.forEach { d -> cells += record.derived[d]?.takeIf { it.isFinite() }?.let(d::format).orEmpty() }
         out.write(cells.joinToString(","))
         out.write("\n")
     }

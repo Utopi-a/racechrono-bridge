@@ -27,6 +27,19 @@ enum class DerivedColumn(
         }
     },
 
+    /**
+     * 過給（大気圧基準）= MAP 絶対圧 E88 − 大気圧 P24。RomRaider の列名と同じ前方一致で解析ツールが読める。
+     * P25 と違い、+127 kPa で頭打ちにならない。
+     */
+    MANIFOLD_RELATIVE("Manifold Relative Pressure (Calculated) (kPa)", 1, listOf("E88", "P24")) {
+        override fun compute(v: Map<String, Double>): Double = v.getValue("E88") - v.getValue("P24")
+    },
+
+    /** 目標ブースト（大気圧基準）= 目標 E90（絶対圧）− 大気圧 P24。実測の過給と同じ基準で比べられる。 */
+    TARGET_BOOST_RELATIVE("Target Boost Relative (Calculated) (kPa relative)", 1, listOf("E90", "P24")) {
+        override fun compute(v: Map<String, Double>): Double = v.getValue("E90") - v.getValue("P24")
+    },
+
     /** RomRaider の P200 と同じ式: MAF (g/s) × 60 ÷ rpm。 */
     ENGINE_LOAD("Engine Load (Calculated) (g/rev)", 2, listOf("P12", "P8")) {
         override fun compute(v: Map<String, Double>): Double? {

@@ -127,28 +127,39 @@ elapsed_ms,kind,id,data
 The `ロガー` section records SSM2 parameters continuously to a RomRaider-style CSV (`Time (msec),<Name> (<units>),...`). The CSV can be read by the RomRaider log tools in the GH8 tuning project without conversion.
 
 1. Connect the adapter as usual.
-2. Pick a session (`A`-`F`) and type the ROM version (for example `mod3` or `revA`). The ROM version goes into the file name.
+2. Pick a session (`A`-`F`) and type the ROM version (for example `mod3`, `revA`, or Japanese text). The ROM version goes into the file name; symbols and spaces are dropped.
 3. Tap `記録を開始`. Normal telemetry and CAN capture pause while logging; RaceChrono keeps receiving the logged values (RPM, boost, throttle, and so on).
 4. Tap `記録を止める`, then `CSV を書き出す`. The Android save dialog can save straight to OneDrive (for example `ECUdata/log`).
 
 Sessions follow the GH8 measurement plan:
 
-| Key | Purpose | Parameters |
+| Key | Purpose | Parameters (slow = every 10 samples) |
 |---|---|---|
-| A | Fuel headroom: injector duty and WOT fueling | P8 P12 P21 E87 E124 P25 E93 E92 P11 P2 (+ calculated injector duty and load) |
-| B | Knock: timing and knock corrections | P8 E87 P10 E94 E95 E96 P25 E93 P60 P11 |
-| C | Boost: overshoot, WGDC, turbo dynamics | P8 P25 E90 P36 E78 E79 E80 E93 P11 |
-| D | Cruise: closed-loop correction/learning, MAF check | P8 P9 E87 P18 E82 E83 E61 E33 P10 P2 |
-| E | Circuit: heat build-up over laps | P8 P11 P2 P25 P10 E94 E95 E96 E93 P36 |
-| F | Shift points: RPM, speed, throttle only | P8 P9 E93 P11 |
+| A | Fuel headroom: injector duty and WOT fueling | P8 P12 P21 E87 E124 E88 P13 E92 P58 · slow P24 P11 P2 (+ calculated injector duty, boost, load) |
+| B | Knock: timing and knock corrections | P8 E87 P10 E94 E95 E96 E88 P13 P60 · slow P24 P11 |
+| C | Boost: overshoot, WGDC, turbo dynamics | P8 E88 E90 P36 E78 E79 E80 P13 · slow P24 P11 (+ calculated boost and target boost on the same basis) |
+| D | Cruise: closed-loop correction/learning, MAF check | P8 P9 E87 P18 E82 E83 E61 E33 P10 · slow P2 |
+| E | Circuit: heat build-up over laps | P8 E88 P10 E94 E95 E96 P13 P36 · slow P11 P2 P24 |
+| F | Shift points: RPM, speed, throttle, boost | P8 P9 P13 E88 · slow P24 P11 |
+
+Calculated columns:
+
+- `Manifold Relative Pressure (Calculated) (kPa)` = E88 (MAP absolute) − P24 (atmospheric). The standard P25 is one byte and stops at +127 kPa, which is too low for GH8 boost spikes around 1.2 bar.
+- `Target Boost Relative (Calculated) (kPa relative)` = E90 − P24, on the same basis as the boost above.
+- `Injector Duty Cycle (Calculated) (%)` = P21 × rpm ÷ 1200 (P21 includes injector latency).
+- `Engine Load (Calculated) (g/rev)` = P12 × 60 ÷ rpm (same as RomRaider P200).
+
+Full throttle is judged with P13. E93 (throttle plate angle) is not guaranteed to read 100 % at full throttle.
 
 How reading works:
 
-- The ECU ID is read with `AA` at the start; extended (`E…`) addresses come from the catalog for that ECU ID. If identification fails, `5104584007` (GH8 A2TB100U) is used.
+- At the start the adapter is resynchronized (late responses are drained and `ATE0` must answer `OK`), the SSM2 settings are applied (each AT command must answer `OK`), and the ECU ID and capability flags are read with `AA`.
+- If identification fails twice, `5104584007` (GH8 A2TB100U) is used and the file name gets `_ecu-unverified`. Standard parameters the ECU reports as unsupported are left out.
 - Extended parameters live in ECU RAM. Nearby RAM addresses are read together with one `A0` block read; GH8's 1-2 byte extended parameters sit in `0xFF708C`-`0xFF70CB`, so most sessions need one block request. Standard parameters are read one byte at a time with `A8` (ELM327 can only send single-frame requests).
-- If the ECU or adapter rejects a block read, that block switches to `A8` reads for the rest of the session and the debug log says so. Block reads over CAN through the iCar Pro 2S still need to be confirmed on the car.
-- Coolant and intake temperature are read every 10 samples.
-- Logging stops by itself after 10 consecutive failed samples.
+- A response is used only if its response code is in place and its length matches the request exactly; error lines from the adapter fail the whole response. After any failure the adapter is resynchronized before the next request, so a late response is never taken as the answer to a later request.
+- If the ECU rejects a block read (`7F`), that block switches to `A8` at once. Other block failures switch only after 3 in a row. The status line shows when block reads are off. Block reads over CAN through the iCar Pro 2S still need to be confirmed on the car.
+- Logging stops by itself after 10 consecutive failed samples. A failed slow read does not stop the fast columns.
+- Two-byte standard values (P8, P12) are read as two `A8` requests, so a value can be off by one high-byte step for one sample when it crosses a byte boundary.
 
 ## SSM Parameter Catalog
 
