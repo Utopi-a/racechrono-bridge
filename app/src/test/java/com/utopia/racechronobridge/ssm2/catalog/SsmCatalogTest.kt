@@ -86,6 +86,13 @@ class SsmCatalogAssetTest {
     }
 
     @Test
+    fun allConversionsOfAParameterShareOneStorageType() {
+        gh8.values.forEach { p -> assertEquals(1, p.conversions.map { it.storage }.toSet().size, p.id) }
+        // 上流の定義では E36 の既定の換算だけ float の指定が抜けている。整数として読むと値が化ける
+        assertEquals(SsmStorage.FLOAT, gh8.getValue("E36").conversion().storage)
+    }
+
+    @Test
     fun afSensorCanBeReadAsAfrInsteadOfTheDefaultLambda() {
         val p = gh8.getValue("P58")
         assertEquals("Lambda", p.conversion().units)

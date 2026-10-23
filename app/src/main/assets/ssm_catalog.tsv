@@ -397,7 +397,7 @@ ext	E35	Boost Error*	5104584007	0xFF6450	4			0	kPa	float	x*0.1333224	0.00
 ext	E35	Boost Error*	5104584007	0xFF6450	4			1	psi	float	x*0.01933677	0.00
 ext	E35	Boost Error*	5104584007	0xFF6450	4			2	bar	float	x*0.001333224	0.000
 ext	E35	Boost Error*	5104584007	0xFF6450	4			3	mmHg	float	x	0
-ext	E36	Target Boost (4-byte)*	5104584007	0xFF6454	4			0	kPa absolute		x*0.1333224	0.00
+ext	E36	Target Boost (4-byte)*	5104584007	0xFF6454	4			0	kPa absolute	float	x*0.1333224	0.00
 ext	E36	Target Boost (4-byte)*	5104584007	0xFF6454	4			1	psi relative sea level	float	(x-760)*0.01933677	0.00
 ext	E36	Target Boost (4-byte)*	5104584007	0xFF6454	4			2	psi absolute	float	x*0.01933677	0.00
 ext	E36	Target Boost (4-byte)*	5104584007	0xFF6454	4			3	bar relative sea level	float	(x-760)*0.001333224	0.000

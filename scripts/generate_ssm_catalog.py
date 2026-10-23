@@ -31,6 +31,14 @@ def conversion_rows(element: ET.Element) -> list[tuple[str, str, str, str]]:
     rows = []
     for c in element.iter("conversion"):
         rows.append((clean(c.get("units")), clean(c.get("storagetype")), clean(c.get("expr")), clean(c.get("format"))))
+    # 同じ値の換算違いなのに、一部の換算だけ storagetype が抜けている定義がある（例: E36 は既定の換算だけ float の指定が無い）。
+    # 抜けた方を整数と読むと値が化けるので、指定のある換算に揃える。指定どうしが食い違う場合は生成を止める
+    explicit = {r[1] for r in rows if r[1]}
+    if len(explicit) > 1:
+        raise SystemExit(f"{element.get('id')}: conflicting storage types {sorted(explicit)}")
+    if explicit:
+        storage = explicit.pop()
+        rows = [(u, s or storage, e, f) for u, s, e, f in rows]
     return rows
 
 
