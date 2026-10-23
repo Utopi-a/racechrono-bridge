@@ -8,12 +8,15 @@ import kotlin.test.assertFailsWith
 /** 送られたコマンドを記録し、決めた応答を返す ELM327 の代役。 */
 class ScriptedElmTransport(private val respond: (String) -> String) : Elm327Transport {
     val sent = mutableListOf<String>()
+
+    /** 遅れて届く応答。readAvailable で 1 つずつ返す（再同期の読み捨てを確かめる）。 */
+    val late = ArrayDeque<String>()
     override fun sendCommand(command: String, timeoutMillis: Long): String {
         sent += command
         return respond(command)
     }
     override fun writeRaw(text: String) = Unit
-    override fun readAvailable(timeoutMillis: Long) = ""
+    override fun readAvailable(timeoutMillis: Long) = late.removeFirstOrNull().orEmpty()
     override fun close() = Unit
 }
 
@@ -31,14 +34,18 @@ class FakeEcu(private val memory: Map<Int, Int>, private val acceptBlockReads: B
             multiFrame(listOf(0xE0) + (start until start + count).map { memory[it] ?: 0 })
         }
         command == "AA" -> multiFrame(listOf(0xEA, 0x00, 0x00, 0x00, 0x51, 0x04, 0x58, 0x40, 0x07) + List(48) { 0xFF })
+        command.startsWith("AT") -> "OK\r>"
         else -> "?\r>"
     }
 
+    /** ELM327（ATCAF1・ATS0）の複数フレーム表示。最初の行は 6 バイト、以降は 7 バイトずつ。 */
     private fun multiFrame(payload: List<Int>): String {
         if (payload.size <= 7) return payload.joinToString(" ") { "%02X".format(it) } + "\r>"
+        val chunks = listOf(payload.take(6)) + payload.drop(6).chunked(7)
         val lines = mutableListOf("%03X".format(payload.size))
-        payload.chunked(7).forEachIndexed { i, chunk ->
-            lines += "%X:".format(i % 16) + chunk.joinToString("") { "%02X".format(it) } + "AA".repeat(7 - chunk.size)
+        chunks.forEachIndexed { i, chunk ->
+            val width = if (i == 0) 6 else 7
+            lines += "%X:".format(i % 16) + chunk.joinToString("") { "%02X".format(it) } + "AA".repeat(width - chunk.size)
         }
         return lines.joinToString("\r") + "\r\r>"
     }
@@ -78,6 +85,48 @@ class Ssm2ClientTest {
     fun shortBlockResponseFails() {
         val client = Ssm2Client(ScriptedElmTransport { "E0 01 02\r>" })
         assertFailsWith<Ssm2RequestFailed> { client.readBlock(0xFF708C, 4) }
+    }
+
+    @Test
+    fun rejectsResponsesWhoseLengthDoesNotMatchTheRequest() {
+        // 遅れて届いた別の要求の応答は長さが合わない。値として使わない
+        assertFailsWith<Ssm2RequestFailed> { Ssm2Client(ScriptedElmTransport { "E8 01 02\r>" }).readAddress(0x0E) }
+        assertFailsWith<Ssm2RequestFailed> { Ssm2Client(ScriptedElmTransport { "07 E0 01 02 03 04 05\r>" }).readBlock(0xFF708C, 4) }
+    }
+
+    @Test
+    fun staleBlockResponseIsNotMistakenForAnAddressRead() {
+        // A0 の応答の途中に E8 という値があっても、A8 の応答コードとはみなさない
+        assertFailsWith<Ssm2RequestFailed> { Ssm2Client(ScriptedElmTransport { "E0 01 E8 22\r>" }).readAddress(0x0E) }
+    }
+
+    @Test
+    fun ecuRejectionIsDistinguishedFromOtherFailures() {
+        assertFailsWith<Ssm2RequestRejected> { Ssm2Client(ScriptedElmTransport { "03 7F A0 12\r>" }).readBlock(0xFF708C, 4) }
+        val noData = runCatching { Ssm2Client(ScriptedElmTransport { "NO DATA\r>" }).readBlock(0xFF708C, 4) }.exceptionOrNull()
+        assertEquals(Ssm2RequestFailed::class, noData!!::class)
+    }
+
+    @Test
+    fun largeBlockWhoseFirstDataByteIs7FIsNotARejection() {
+        val memory = (0xFF7000 until 0xFF7000 + 224).associateWith { if (it == 0xFF7000) 0x7F else 0x11 }
+        val bytes = Ssm2Client(ScriptedElmTransport(FakeEcu(memory)::respond)).readBlock(0xFF7000, 224)
+        assertEquals(0x7F, bytes.first())
+        assertEquals(224, bytes.size)
+    }
+
+    @Test
+    fun resynchronizeDrainsLateResponsesAndConfirmsOk() {
+        val transport = ScriptedElmTransport(FakeEcu(memory)::respond)
+        transport.late += listOf("E8 22\r>", "E8 23\r>")
+        Ssm2Client(transport).resynchronize()
+        assertEquals(0, transport.late.size)
+        assertEquals(listOf("ATE0"), transport.sent)
+    }
+
+    @Test
+    fun resynchronizeFailsWhenAdapterNeverAnswersOk() {
+        assertFailsWith<Ssm2RequestFailed> { Ssm2Client(ScriptedElmTransport { "E8 22\r>" }).resynchronize() }
     }
 }
 
@@ -129,5 +178,31 @@ class Ssm2SamplerTest {
         assertEquals(wanted.associateWith { memory.getValue(it) }, second.bytes)
         assertEquals(0, transport.sent.count { it.startsWith("A0") })
         assertEquals(wanted.size, second.requests)
+        assertEquals(true, sampler.degraded)
+    }
+
+    @Test
+    fun transientBlockFailuresAreRetriedBeforeFallingBack() {
+        var noDataLeft = 2
+        val ecu = FakeEcu(memory)
+        val transport = ScriptedElmTransport { command ->
+            if (command.startsWith("A0") && noDataLeft > 0) { noDataLeft--; "NO DATA\r>" } else ecu.respond(command)
+        }
+        val sampler = Ssm2Sampler(Ssm2Client(transport), wanted)
+        assertFailsWith<Ssm2RequestFailed> { sampler.sample() }
+        assertFailsWith<Ssm2RequestFailed> { sampler.sample() }
+        // 2 回の一時的な失敗のあと成功すれば、ブロック読み出しのまま続ける
+        assertEquals(wanted.associateWith { memory.getValue(it) }, sampler.sample().bytes)
+        assertEquals(false, sampler.degraded)
+    }
+
+    @Test
+    fun persistentNonRejectionFailuresFallBackAfterThreeTries() {
+        val ecu = FakeEcu(memory)
+        val transport = ScriptedElmTransport { command -> if (command.startsWith("A0")) "BUFFER FULL\r>" else ecu.respond(command) }
+        val sampler = Ssm2Sampler(Ssm2Client(transport), wanted)
+        repeat(Ssm2Sampler.BLOCK_FAILURES_BEFORE_FALLBACK - 1) { assertFailsWith<Ssm2RequestFailed> { sampler.sample() } }
+        assertEquals(wanted.associateWith { memory.getValue(it) }, sampler.sample().bytes)
+        assertEquals(true, sampler.degraded)
     }
 }

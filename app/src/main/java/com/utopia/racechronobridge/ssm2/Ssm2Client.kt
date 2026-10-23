@@ -5,7 +5,10 @@ import com.utopia.racechronobridge.elm.ElmResponseParser
 import com.utopia.racechronobridge.elm.ElmSsm2Response
 import java.util.Locale
 
-class Ssm2RequestFailed(message: String) : Exception(message)
+open class Ssm2RequestFailed(message: String) : Exception(message)
+
+/** ECU が要求を拒否した（応答コード 7F）。その ECU はこの読み方に対応していない。 */
+class Ssm2RequestRejected(message: String) : Ssm2RequestFailed(message)
 
 /** ECU 識別（CAN では `AA` → `EA`）の結果。 */
 data class Ssm2Identification(
@@ -36,7 +39,10 @@ class Ssm2Client(
 
     fun readAddress(address: Int): Int {
         require(address in 0..0xFFFFFF) { "address out of range: $address" }
-        val data = request(command = "A800${hex(address, 6)}", marker = ElmResponseParser.SSM2_ADDRESS_READ_MARKER)
+        val command = "A800${hex(address, 6)}"
+        val data = request(command = command, marker = ElmResponseParser.SSM2_ADDRESS_READ_MARKER)
+        // 長さが合わない応答は、別の要求の応答が遅れて届いた可能性がある。値として使わない
+        if (data.size != 1) throw Ssm2RequestFailed("$command returned ${data.size} bytes")
         return data.first()
     }
 
@@ -48,21 +54,46 @@ class Ssm2Client(
             command = "A000${hex(start, 6)}${hex(count - 1, 2)}",
             marker = ElmResponseParser.SSM2_BLOCK_READ_MARKER,
         )
-        if (data.size < count) throw Ssm2RequestFailed("block 0x${hex(start, 6)}+$count returned ${data.size} bytes")
-        return data.take(count)
+        if (data.size != count) throw Ssm2RequestFailed("block 0x${hex(start, 6)}+$count returned ${data.size} bytes")
+        return data
+    }
+
+    /**
+     * 失敗やタイムアウトの後に、要求と応答の対応を取り戻す。
+     * 遅れて届く応答を読み捨て、AT コマンドに `OK` が返ることを確かめる。確かめられなければ例外。
+     */
+    fun resynchronize() {
+        repeat(RESYNC_ATTEMPTS) { attempt ->
+            drain()
+            val raw = runCatching { transport.sendCommand("ATE0", 1_000) }.getOrDefault("")
+            if ("OK" in raw.uppercase()) return
+            if (attempt == RESYNC_ATTEMPTS - 1) throw Ssm2RequestFailed("adapter did not answer OK after resync: ${raw.trim()}")
+        }
+    }
+
+    private fun drain() {
+        val deadline = System.currentTimeMillis() + DRAIN_MAX_MILLIS
+        while (System.currentTimeMillis() < deadline) {
+            if (transport.readAvailable(DRAIN_QUIET_MILLIS).isEmpty()) return
+        }
     }
 
     private fun request(command: String, marker: Int, timeoutMillis: Long = 2_000): List<Int> {
         val raw = transport.sendCommand(command, timeoutMillis)
         return when (val response = parser.parseSsm2Response(raw = raw, echoCommand = command, marker = marker)) {
             is ElmSsm2Response.Data -> response.dataBytes
-            is ElmSsm2Response.Error -> throw Ssm2RequestFailed("$command: ${response.reason}")
+            is ElmSsm2Response.Error ->
+                if (response.rejected) throw Ssm2RequestRejected("$command: ${response.reason}")
+                else throw Ssm2RequestFailed("$command: ${response.reason}")
         }
     }
 
     companion object {
         /** ISO15765 の要求の長さバイトの上限（FreeSSM と同じ）。 */
         const val MAX_BLOCK_BYTES = 256
+        private const val RESYNC_ATTEMPTS = 3
+        private const val DRAIN_QUIET_MILLIS = 150L
+        private const val DRAIN_MAX_MILLIS = 2_000L
 
         private fun hex(value: Int, digits: Int) = value.toString(16).uppercase(Locale.US).padStart(digits, '0')
     }

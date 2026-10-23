@@ -96,3 +96,28 @@ class ElmMultiFrameResponseTest {
         assertEquals("BUFFER FULL", error.reason)
     }
 }
+
+class ElmErrorLineTest {
+    private val parser = ElmResponseParser()
+
+    @Test
+    fun errorLinesFailTheWholeResponseEvenWithData() {
+        listOf("E0 01 02 03\r<DATA ERROR\r>", "E8 3D\r<RX ERROR\r>", "BUS BUSY\r>", "UNABLE TO CONNECT\r>", "ERR94\r>", "E8 3D\rFB ERROR\r>").forEach { raw ->
+            assertIs<ElmSsm2Response.Error>(parser.parseSsm2Response(raw = raw, echoCommand = null, marker = 0xE8), raw)
+        }
+    }
+
+    @Test
+    fun bytesComeOnlyFromHexLines() {
+        // "OK" や英字の行から DA・AB などをバイトとして拾わない
+        val data = assertIs<ElmSsm2Response.Data>(parser.parseSsm2Response(raw = "OK\rE8 3D\r>", echoCommand = null, marker = 0xE8))
+        assertEquals(listOf(0x3D), data.dataBytes)
+    }
+
+    @Test
+    fun strictMarkerOnlyAcceptsTheFirstOrSecondByte() {
+        assertIs<ElmSsm2Response.Error>(parser.parseSsm2Response(raw = "E0 01 E8 22\r>", echoCommand = null, marker = 0xE8))
+        // 従来の A8 読み出し（Ssm2Reader）は位置を問わないまま
+        assertIs<ElmSsm2Response.Data>(parser.parseSsm2Data("E0 01 E8 22\r>"))
+    }
+}

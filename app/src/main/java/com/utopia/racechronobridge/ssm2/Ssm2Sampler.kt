@@ -57,8 +57,11 @@ data class Ssm2Sample(
 )
 
 /**
- * 決めたアドレスを毎回読み、ブロック読み出しが失敗したら、そのブロックだけを A8 に切り替える。
- * 切り替えはこのインスタンスが続く間は保たれる（失敗するブロックを毎回送って遅くしないため）。
+ * 決めたアドレスを毎回読む。ブロック読み出しの扱い:
+ * - ECU が拒否（7F）したら、そのブロックはすぐ A8 に切り替える（その ECU は対応していない）
+ * - それ以外の失敗（NO DATA・タイムアウトなど）は一時的なこともあるので、[BLOCK_FAILURES_BEFORE_FALLBACK] 回続いたときだけ切り替える。
+ *   それまでは例外をそのまま投げ、呼び出し側で通信を立て直してから読み直してもらう
+ * 切り替えはこのインスタンスが続く間は保たれる。
  */
 class Ssm2Sampler(
     private val client: Ssm2Client,
@@ -68,6 +71,7 @@ class Ssm2Sampler(
 ) {
     private val wanted = addresses.toSet()
     private val addressOnly = mutableSetOf<Int>()
+    private val blockFailures = mutableMapOf<Int, Int>()
     var plan: List<Ssm2Read> = Ssm2ReadPlanner.plan(wanted)
         private set
 
@@ -86,16 +90,28 @@ class Ssm2Sampler(
                     requests++
                     try {
                         client.readBlock(read.start, read.count).forEachIndexed { i, b -> bytes[read.start + i] = b }
-                    } catch (error: Ssm2RequestFailed) {
+                        blockFailures.remove(read.start)
+                    } catch (error: Exception) {
+                        if (error is InterruptedException) throw error
+                        val failures = (blockFailures[read.start] ?: 0) + 1
+                        blockFailures[read.start] = failures
+                        if (error !is Ssm2RequestRejected && failures < BLOCK_FAILURES_BEFORE_FALLBACK) throw error
                         val fallback = read.addresses.filter { it in wanted }
                         addressOnly += fallback
                         plan = Ssm2ReadPlanner.plan(wanted, addressOnly)
-                        onLog("Block read 0x${read.start.toString(16).uppercase()}+${read.count} failed (${error.message}); using A8 for ${fallback.size} addresses.")
+                        onLog("Block read 0x${read.start.toString(16).uppercase()}+${read.count} failed $failures time(s) (${error.message}); using A8 for ${fallback.size} addresses.")
                         fallback.forEach { queue.addFirst(Ssm2Read.Address(it)) }
                     }
                 }
             }
         }
         return Ssm2Sample(bytes = bytes.filterKeys { it in wanted }, requests = requests, elapsedMillis = clock() - started)
+    }
+
+    /** A8 に切り替えたブロックがあるか（読み出しが遅くなっている）。 */
+    val degraded: Boolean get() = addressOnly.isNotEmpty()
+
+    companion object {
+        const val BLOCK_FAILURES_BEFORE_FALLBACK = 3
     }
 }

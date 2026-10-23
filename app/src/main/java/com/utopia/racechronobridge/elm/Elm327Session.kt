@@ -21,6 +21,11 @@ class Elm327Session(
             if (parser.isElmError(raw)) {
                 error("ELM command failed: $command response=${raw.trim()}")
             }
+            // ATZ はバージョン文字列を返す。それ以外の AT は OK が返らなければ失敗とみなす
+            // （遅れて届いた SSM2 の応答を AT の応答と取り違えて先へ進まないため）
+            if (command != "ATZ" && "OK" !in raw.uppercase()) {
+                error("ELM command was not acknowledged: $command response=${raw.trim()}")
+            }
         }
     }
 
