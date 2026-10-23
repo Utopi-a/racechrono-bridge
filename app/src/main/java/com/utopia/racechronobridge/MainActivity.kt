@@ -36,6 +36,7 @@ import com.utopia.racechronobridge.background.BridgeRuntimeStore
 import com.utopia.racechronobridge.background.StepState
 import com.utopia.racechronobridge.background.StepStatus
 import com.utopia.racechronobridge.diagnostics.AppExitDiagnostics
+import com.utopia.racechronobridge.logger.AlarmThresholds
 import com.utopia.racechronobridge.logger.LogPresets
 import com.utopia.racechronobridge.racechrono.RaceChronoTcpServer
 import com.utopia.racechronobridge.racechrono.RaceChronoTcpStatus
@@ -81,6 +82,8 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
     private lateinit var logView: TextView
     private var detailsExpanded = false
     private lateinit var loggerStep: StepRow
+    private lateinit var loggerAlarmStep: StepRow
+    private lateinit var loggerAlarmLayout: LinearLayout
     private lateinit var loggerButton: TextView
     private lateinit var loggerExportButton: TextView
     private lateinit var loggerPresetLayout: LinearLayout
@@ -159,6 +162,9 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
         renderLogger(state)
         if (previous.loggerPresetKey != state.loggerPresetKey || loggerPresetLayout.childCount == 0) {
             renderLoggerPreset(state.loggerPresetKey)
+        }
+        if (previous.loggerAlarmsEnabled != state.loggerAlarmsEnabled || loggerAlarmLayout.childCount == 0) {
+            renderLoggerAlarms(state.loggerAlarmsEnabled)
         }
         tcpToggleButton.text = if (state.tcpStatus.running) "TCP サーバーを止める" else "TCP サーバーを開始"
         if (previous.acquisitionMode != state.acquisitionMode || acquisitionLayout.childCount == 0) {
@@ -369,6 +375,8 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
 
     private fun buildLoggerSection(): View {
         loggerStep = stepRow("状態")
+        loggerAlarmStep = stepRow("警報")
+        loggerAlarmLayout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         loggerRomTagInput = EditText(this).apply {
             hint = "ROM の版名（例: mod3、revA）。ファイル名に入ります"
             isSingleLine = true
@@ -411,7 +419,16 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
             addView(loggerPresetLayout, fullWidthParams(top = 6))
             addView(sectionHint("ROM"), fullWidthParams(top = 12))
             addView(loggerRomTagInput, fullWidthParams(top = 6))
-            addView(card { addView(loggerStep.view) }, fullWidthParams(top = 10))
+            addView(sectionHint("警報"), fullWidthParams(top = 12))
+            addView(loggerAlarmLayout, fullWidthParams(top = 6))
+            addView(
+                card {
+                    addView(loggerStep.view)
+                    addView(divider())
+                    addView(loggerAlarmStep.view)
+                },
+                fullWidthParams(top = 10),
+            )
             addView(row(loggerButton to 1f, loggerExportButton to 1f), fullWidthParams(top = 10))
             addView(loggerValuesLayout, fullWidthParams(top = 10))
         }
@@ -431,8 +448,27 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
         )
     }
 
+    private fun renderLoggerAlarms(enabled: Boolean) {
+        loggerAlarmLayout.removeAllViews()
+        loggerAlarmLayout.addView(
+            segmentedControl(options = listOf("音とバイブで鳴らす" to enabled, "鳴らさない" to !enabled)) { index ->
+                runtime.setLoggerAlarmsEnabled(index == 0)
+            },
+        )
+        val t = AlarmThresholds()
+        loggerAlarmLayout.addView(
+            caption(
+                "全開（スロットル ${t.wotThrottlePercent.toInt()}% 以上）・過給 ${t.boostedKpa.toInt()} kPa 以上で A/F が ${t.leanAfr} を超えた、" +
+                    "ノック補正が ${t.knockDropDegrees}° 以上下がった、過給が ${t.overboostKpa.toInt()} kPa を超えた、" +
+                    "開弁率が ${t.injectorDutyPercent.toInt()}% 以上。鳴らさない設定でも CSV の Alarm 列には残ります。",
+            ),
+            fullWidthParams(top = 6),
+        )
+    }
+
     private fun renderLogger(state: BridgeRuntimeState) {
         loggerStep.render(state.logger)
+        loggerAlarmStep.render(state.loggerLastAlarm)
         val recording = state.logger.state == StepState.WORKING
         loggerButton.text = if (recording) "記録を止める" else "記録を開始"
         val canStart = recording || (state.adapter.state == StepState.OK && state.capture.state != StepState.WORKING)
