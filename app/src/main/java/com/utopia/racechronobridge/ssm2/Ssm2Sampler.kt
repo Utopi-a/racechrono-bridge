@@ -21,8 +21,11 @@ sealed interface Ssm2Read {
 object Ssm2ReadPlanner {
     const val BLOCK_READ_MIN_ADDRESS = 0xFF0000
 
-    /** ブロックに含めてよい、読む必要の無いアドレスの連続数。これを超える隙間ではブロックを分ける。 */
-    const val MAX_GAP = 16
+    /**
+     * ブロックに含めてよい、読む必要の無いアドレスの連続数。これを超える隙間ではブロックを分ける。
+     * 往復 1 回（BLE 越しに数十 ms）に比べ、余分な数十バイトの受信（CAN は数フレーム、BLE は数 ms）は安い。
+     */
+    const val MAX_GAP = 48
 
     /** 1 ブロックの上限。長い応答は BLE での受け取りに時間がかかり、ELM327 のバッファも溢れやすい。 */
     const val MAX_BLOCK_BYTES = 128
