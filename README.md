@@ -161,6 +161,19 @@ How reading works:
 - Logging stops by itself after 10 consecutive failed samples. A failed slow read does not stop the fast columns.
 - Two-byte standard values (P8, P12) are read as two `A8` requests, so a value can be off by one high-byte step for one sample when it crosses a byte boundary.
 
+### Alarms
+
+While logging, every sample is checked against fixed thresholds so the driver does not have to watch the screen. Alarms sound from the foreground service, so they also work while RaceChrono is in front. Severe alarms play a long high tone with two long vibrations; knock plays two short beeps.
+
+| Alarm | Condition |
+|---|---|
+| `LEAN_AFR` | Throttle (P13) 90 % or more, boost 50 kPa or more, and A/F (E92) above 11.2 for two samples in a row. The stock A/F sensor pins at 11.15 when richer, so a value above 11.2 means the mixture is leaner than intended. Check the pinned value of E92 and P58 in the first fuel-session log; if E92 pins above 11.2, the threshold must be changed before relying on this alarm |
+| `KNOCK` | Feedback knock correction (E94) drops 0.7 degrees or more from the previous sample (a new knock event; recovery steps do not trigger it) |
+| `OVERBOOST` | Boost above 125 kPa (the GH8 boost cut is about 137 kPa). Uses the calculated boost (E88 − P24), which is not capped at 127 kPa like P25 |
+| `INJECTOR_DUTY` | Calculated injector duty 95 % or more |
+
+The same alarm does not repeat within 3 seconds. Alarms are always evaluated and written to the `Alarm` column of the CSV; the switch in the logger section only mutes the sound and vibration.
+
 ## SSM Parameter Catalog
 
 `app/src/main/assets/ssm_catalog.tsv` is generated from the RomRaider logger definition and is the single source for SSM parameter addresses, storage types, and conversions used by the logger.

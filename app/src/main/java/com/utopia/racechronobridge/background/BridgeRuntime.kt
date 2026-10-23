@@ -17,6 +17,9 @@ import com.utopia.racechronobridge.canlog.CanCaptureSession
 import com.utopia.racechronobridge.canlog.CanCaptureWriter
 import com.utopia.racechronobridge.elm.Elm327Session
 import com.utopia.racechronobridge.elm.Elm327Transport
+import com.utopia.racechronobridge.logger.AlarmEvent
+import com.utopia.racechronobridge.logger.AlarmMonitor
+import com.utopia.racechronobridge.logger.AlarmNotifier
 import com.utopia.racechronobridge.logger.LogLayout
 import com.utopia.racechronobridge.logger.LogPreset
 import com.utopia.racechronobridge.logger.LogPresets
@@ -80,6 +83,8 @@ data class BridgeRuntimeState(
     val loggerPresetKey: String = LogPresets.FUEL.key,
     val loggerRomTag: String = "",
     val loggerValues: List<LoggerValue> = emptyList(),
+    val loggerAlarmsEnabled: Boolean = true,
+    val loggerLastAlarm: StepStatus = StepStatus(StepState.IDLE, "なし"),
 )
 
 class BridgeRuntime(
@@ -138,6 +143,8 @@ class BridgeRuntime(
     @Volatile
     private var loggerStop: AtomicBoolean? = null
 
+    private val alarmNotifier by lazy { AlarmNotifier(appContext) }
+
     /** RomRaider ロガー定義から作った SSM パラメータ表（assets）。最初に記録を始めたときに読む。 */
     private val catalog: SsmCatalog by lazy {
         appContext.assets.open(CATALOG_ASSET).bufferedReader().useLines { SsmCatalog.parse(it) }
@@ -156,6 +163,7 @@ class BridgeRuntime(
         state = state.copy(
             loggerPresetKey = savedPreset ?: state.loggerPresetKey,
             loggerRomTag = preferences().getString(KEY_LOGGER_ROM_TAG, "").orEmpty(),
+            loggerAlarmsEnabled = preferences().getBoolean(KEY_LOGGER_ALARMS, true),
         )
     }
 
@@ -344,6 +352,12 @@ class BridgeRuntime(
         updateState { copy(loggerPresetKey = key) }
     }
 
+    fun setLoggerAlarmsEnabled(enabled: Boolean) {
+        if (state.loggerAlarmsEnabled == enabled) return
+        preferences().edit().putBoolean(KEY_LOGGER_ALARMS, enabled).apply()
+        updateState { copy(loggerAlarmsEnabled = enabled) }
+    }
+
     /** ファイル名に入れる ROM の版名（例: mod3、revA）。どの ROM で取ったログかを後から区別するため。 */
     fun setLoggerRomTag(tag: String) {
         val cleaned = tag.trim()
@@ -381,6 +395,7 @@ class BridgeRuntime(
             copy(
                 logger = StepStatus(StepState.WORKING, "準備中"),
                 loggerValues = emptyList(),
+                loggerLastAlarm = StepStatus(StepState.IDLE, "なし"),
                 ecu = StepStatus(StepState.IDLE, "記録中は通常の取得を止めています"),
             )
         }
@@ -416,7 +431,9 @@ class BridgeRuntime(
                     layout = layout,
                     writer = writer,
                     clock = SystemClock::elapsedRealtime,
-                    onRecord = { record, stats -> onLoggerRecord(layout, record, stats, ecuVerified = identification != null) },
+                    // 鳴らすかどうかに関係なく判定して CSV に残す（後から見返せるように）
+                    alarms = AlarmMonitor(),
+                    onRecord = { record, stats, alarms -> onLoggerRecord(layout, record, stats, alarms, ecuVerified = identification != null) },
                     onLog = ::appendLog,
                 )
                 loggerSession = logger
@@ -603,6 +620,7 @@ class BridgeRuntime(
 
     fun shutdown() {
         stopLogging()
+        alarmNotifier.release()
         stopCanCapture()
         stopTelemetry()
         stopBleScan()
@@ -682,8 +700,13 @@ class BridgeRuntime(
         return File(directory, "romraiderlog_${timestamp}_${preset.key}_$tag$suffix.csv")
     }
 
-    private fun onLoggerRecord(layout: LogLayout, record: LogRecord, stats: LoggerStats, ecuVerified: Boolean) {
+    private fun onLoggerRecord(layout: LogLayout, record: LogRecord, stats: LoggerStats, alarms: List<AlarmEvent>, ecuVerified: Boolean) {
         publishTelemetry(lastTelemetry.updatedWith(record, System.currentTimeMillis()))
+        alarms.forEach { alarm ->
+            appendLog("ALARM ${alarm.kind.name} at ${alarm.elapsedMillis} ms: ${alarm.message}")
+            if (state.loggerAlarmsEnabled) runCatching { alarmNotifier.notify(alarm) }
+            updateState { copy(loggerLastAlarm = StepStatus(StepState.FAILED, "${alarm.kind.label}: ${alarm.message}")) }
+        }
         val values = layout.columns.map { c ->
             LoggerValue(c.header, record.values[c.id]?.let(c.conversion::formatValue) ?: "-")
         } + layout.derived.map { d -> LoggerValue(d.header, record.derived[d]?.let(d::format) ?: "-") }
@@ -781,6 +804,7 @@ class BridgeRuntime(
         private const val KEY_ACQUISITION_MODE = "acquisition_mode"
         private const val KEY_LOGGER_PRESET = "logger_preset"
         private const val KEY_LOGGER_ROM_TAG = "logger_rom_tag"
+        private const val KEY_LOGGER_ALARMS = "logger_alarms"
         private const val LOGGER_DIRECTORY = "logs"
         private const val CATALOG_ASSET = "ssm_catalog.tsv"
 

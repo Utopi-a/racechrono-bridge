@@ -99,10 +99,21 @@ class RomRaiderCsvWriterTest {
         val lines = out.toString().trimEnd().lines()
         assertEquals(
             "Time (msec),Engine Speed (rpm),Feedback Knock Correction (1-byte)** (degrees),Fuel Injector #1 Pulse Width (ms),Mass Airflow (g/s)," +
-                "Injector Duty Cycle (Calculated) (%),Engine Load (Calculated) (g/rev)",
+                "Injector Duty Cycle (Calculated) (%),Engine Load (Calculated) (g/rev),Alarm",
             lines[0],
         )
-        assertEquals("250,3000,-1.41,5.12,,,", lines[1])
+        assertEquals("250,3000,-1.41,5.12,,,,", lines[1])
+    }
+
+    @Test
+    fun writesFiredAlarmKindsInTheLastColumn() {
+        val layout = LogLayout.resolve(LogPreset("T", "t", "t", listOf(LogParameterRef("P8"))), GH8)
+        val out = StringWriter()
+        RomRaiderCsvWriter(out, layout).write(
+            LogRecord(0, mapOf("P8" to 6000.0), emptyMap()),
+            alarms = listOf(AlarmEvent(AlarmKind.KNOCK, "x", 0), AlarmEvent(AlarmKind.OVERBOOST, "y", 0)),
+        )
+        assertEquals("0,6000,KNOCK;OVERBOOST", out.toString().trim())
     }
 
     @Test
@@ -110,7 +121,7 @@ class RomRaiderCsvWriterTest {
         val layout = LogLayout.resolve(LogPreset("T", "t", "t", listOf(LogParameterRef("E124", units = "estimated AFR"))), GH8)
         val out = StringWriter()
         RomRaiderCsvWriter(out, layout).write(LogRecord(0, mapOf("E124" to Double.POSITIVE_INFINITY), emptyMap()))
-        assertEquals("0,", out.toString().trim())
+        assertEquals("0,,", out.toString().trim()) // 値の空欄と、警報なしの Alarm 列
     }
 }
 
@@ -140,7 +151,7 @@ class LoggerSessionTest {
             layout = layout,
             writer = RomRaiderCsvWriter(out, layout),
             clock = { now += 10; now },
-            onRecord = { r, _ -> records += r; if (records.size == 12) session.requestStop() },
+            onRecord = { r, _, _ -> records += r; if (records.size == 12) session.requestStop() },
         )
         session.run()
 
@@ -171,7 +182,7 @@ class LoggerSessionTest {
             client = Ssm2Client(transport),
             layout = layout,
             writer = RomRaiderCsvWriter(StringWriter(), layout),
-            onRecord = { r, _ -> records += r; if (records.size == 3) session.requestStop() },
+            onRecord = { r, _, _ -> records += r; if (records.size == 3) session.requestStop() },
         )
         session.run()
         assertEquals(3, records.size)
@@ -203,5 +214,78 @@ class LogRecordTelemetryTest {
         assertEquals(0, before.updatedWith(LogRecord(0, mapOf("P60" to 256.0), emptyMap()), 0).gear)
         val boosted = before.updatedWith(LogRecord(0, emptyMap(), mapOf(DerivedColumn.MANIFOLD_RELATIVE to 121.0)), 0)
         assertEquals(121.0, boosted.boostKpa)
+    }
+}
+
+class AlarmMonitorTest {
+    private fun record(t: Long, vararg values: Pair<String, Double>, duty: Double? = null) =
+        LogRecord(t, values.toMap(), duty?.let { mapOf(DerivedColumn.INJECTOR_DUTY to it) } ?: emptyMap())
+
+    @Test
+    fun leanAfrNeedsWideOpenThrottleBoostAndTwoSamplesInARow() {
+        val m = AlarmMonitor()
+        assertEquals(emptyList(), m.evaluate(record(0, "P13" to 100.0, "P25" to 100.0, "E92" to 11.4)))
+        assertEquals(listOf(AlarmKind.LEAN_AFR), m.evaluate(record(100, "P13" to 100.0, "P25" to 100.0, "E92" to 11.4)).map { it.kind })
+    }
+
+    @Test
+    fun leanAfrIgnoresPinnedSensorAndPartThrottle() {
+        val m = AlarmMonitor()
+        // 濃いときは 11.15 で張り付く。これは正常
+        repeat(3) { assertEquals(emptyList(), m.evaluate(record(it * 100L, "P13" to 100.0, "P25" to 100.0, "E92" to 11.15))) }
+        // 巡航（閉ループ）は 14.7 前後が正常
+        repeat(3) { assertEquals(emptyList(), m.evaluate(record(1000 + it * 100L, "P13" to 20.0, "P25" to -30.0, "E92" to 14.7))) }
+    }
+
+    @Test
+    fun knockAlarmFiresOnANewDropOnlyAndRespectsCooldown() {
+        val m = AlarmMonitor(cooldownMillis = 3_000)
+        assertEquals(emptyList(), m.evaluate(record(0, "E94" to 0.0, "P8" to 4000.0)))
+        assertEquals(listOf(AlarmKind.KNOCK), m.evaluate(record(100, "E94" to -1.40625, "P8" to 4200.0)).map { it.kind })
+        // 戻っていく途中（-1.41 → -1.05）は新しいノックではない
+        assertEquals(emptyList(), m.evaluate(record(200, "E94" to -1.05)))
+        // 次の下がりでも 3 秒以内なら繰り返さない
+        assertEquals(emptyList(), m.evaluate(record(300, "E94" to -2.46)))
+        assertEquals(listOf(AlarmKind.KNOCK), m.evaluate(record(3_500, "E94" to -3.87)).map { it.kind })
+    }
+
+    @Test
+    fun boostChecksUseTheCalculatedColumnWhichIsNotCappedAt127Kpa() {
+        val m = AlarmMonitor()
+        val r = LogRecord(0, mapOf("P13" to 100.0), mapOf(DerivedColumn.MANIFOLD_RELATIVE to 131.0))
+        assertEquals(listOf(AlarmKind.OVERBOOST), m.evaluate(r).map { it.kind })
+    }
+
+    @Test
+    fun overboostAndInjectorDuty() {
+        val m = AlarmMonitor()
+        val kinds = m.evaluate(record(0, "P25" to 126.0, duty = 96.0)).map { it.kind }.toSet()
+        assertEquals(setOf(AlarmKind.OVERBOOST, AlarmKind.INJECTOR_DUTY), kinds)
+        assertEquals(emptyList(), AlarmMonitor().evaluate(record(0, "P25" to 111.0, duty = 92.0)))
+    }
+
+    @Test
+    fun sessionWritesAlarmsToCsvAndPassesThemToTheCallback() {
+        val memory = buildMap {
+            put(0x0E, 0x66); put(0x0F, 0x18)
+            put(0x24, 0xFF) // MRP 127 kPa → 過給超過
+            put(0x11, 0xA0); put(0x12, 0x3C); put(0x4A, 0x02)
+            (0xFF7080..0xFF70D0).forEach { put(it, 0x80) }
+        }
+        val layout = LogLayout.resolve(LogPresets.KNOCK, GH8)
+        val out = StringWriter()
+        val fired = mutableListOf<AlarmEvent>()
+        lateinit var session: LoggerSession
+        var n = 0
+        session = LoggerSession(
+            client = Ssm2Client(ScriptedElmTransport(FakeEcu(memory)::respond)),
+            layout = layout,
+            writer = RomRaiderCsvWriter(out, layout),
+            alarms = AlarmMonitor(),
+            onRecord = { _, _, alarms -> fired += alarms; if (++n == 2) session.requestStop() },
+        )
+        session.run()
+        assertEquals(listOf(AlarmKind.OVERBOOST), fired.map { it.kind })
+        assertTrue(out.toString().lines()[1].endsWith(",OVERBOOST"))
     }
 }

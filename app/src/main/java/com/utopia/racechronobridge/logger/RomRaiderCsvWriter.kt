@@ -6,22 +6,24 @@ import java.io.Writer
  * RomRaider Logger と同じ形の CSV を書く。1 行目が `Time (msec),<名前> (<単位>),...`。
  * gh8-ecu-tuning の解析ツールは列名の前方一致で列を探すので、列名は RomRaider の表記に合わせる。
  * 値が無い列（まだ一度も読めていない項目）は空欄にする。
+ * 末尾の `Alarm` 列には、その行で鳴った警報の種類を `;` 区切りで書く（数値でないので解析ツールは読み飛ばす）。
  */
 class RomRaiderCsvWriter(
     private val out: Writer,
     private val layout: LogLayout,
 ) {
     fun writeHeader() {
-        out.write((listOf(TIME_HEADER) + layout.headers).joinToString(",") { it.toCsvCell() })
+        out.write((listOf(TIME_HEADER) + layout.headers + ALARM_HEADER).joinToString(",") { it.toCsvCell() })
         out.write("\n")
     }
 
-    fun write(record: LogRecord) {
+    fun write(record: LogRecord, alarms: List<AlarmEvent> = emptyList()) {
         val cells = ArrayList<String>(layout.headers.size + 1)
         cells += record.elapsedMillis.toString()
         // 生値 0 の割り算などで出る Infinity・NaN は、値として書かず空欄にする
         layout.columns.forEach { c -> cells += record.values[c.id]?.takeIf { it.isFinite() }?.let(c.conversion::formatValue).orEmpty() }
         layout.derived.forEach { d -> cells += record.derived[d]?.takeIf { it.isFinite() }?.let(d::format).orEmpty() }
+        cells += alarms.joinToString(";") { it.kind.name }
         out.write(cells.joinToString(","))
         out.write("\n")
     }
@@ -32,6 +34,7 @@ class RomRaiderCsvWriter(
 
     companion object {
         const val TIME_HEADER = "Time (msec)"
+        const val ALARM_HEADER = "Alarm"
     }
 }
 

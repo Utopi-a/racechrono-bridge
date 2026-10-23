@@ -23,14 +23,16 @@ data class LoggerStats(
  * - 失敗したら、遅れて届く応答を読み捨てて通信を立て直してから続ける（要求と応答が 1 つずれたまま記録しないため）
  * - 失敗が [MAX_CONSECUTIVE_FAILURES] 回続いたら例外で終わる
  * - 変化の遅い列は [SLOW_EVERY] 回に 1 回読み、その間は前回値を書く。遅い列の失敗では速い列を止めない
+ * - [alarms] があれば毎回判定し、鳴った警報を CSV の Alarm 列と [onRecord] に渡す
  */
 class LoggerSession(
     private val client: Ssm2Client,
     private val layout: LogLayout,
     private val writer: RomRaiderCsvWriter,
+    private val alarms: AlarmMonitor? = null,
     /** 経過時間の基準。壁時計の補正で飛ばないよう、実機では SystemClock.elapsedRealtime を渡す。 */
     private val clock: () -> Long = { System.nanoTime() / 1_000_000 },
-    private val onRecord: (LogRecord, LoggerStats) -> Unit = { _, _ -> },
+    private val onRecord: (LogRecord, LoggerStats, List<AlarmEvent>) -> Unit = { _, _, _ -> },
     private val onLog: (String) -> Unit = {},
 ) {
     private val fast = Ssm2Sampler(client, layout.fastAddresses, clock, onLog)
@@ -77,7 +79,8 @@ class LoggerSession(
                 val now = clock()
                 // 同じアドレスなら、今回読んだ速い列の値を優先する
                 val record = layout.decode(slowBytes + f.bytes, elapsedMillis = now - started)
-                writer.write(record)
+                val fired = alarms?.evaluate(record).orEmpty()
+                writer.write(record, fired)
                 samples++
                 if (samples % SLOW_EVERY == 0L) slowDue = true
                 consecutiveFailures = 0
@@ -86,7 +89,7 @@ class LoggerSession(
                 val span = recentTimes.last() - recentTimes.first()
                 val rate = if (recentTimes.size > 1 && span > 0) (recentTimes.size - 1) * 1000.0 / span else 0.0
                 val degraded = fast.degraded || slow?.degraded == true
-                onRecord(record, LoggerStats(samples, rate, requests, failures, degraded))
+                onRecord(record, LoggerStats(samples, rate, requests, failures, degraded), fired)
                 if (now - lastFlush >= FLUSH_INTERVAL_MILLIS) {
                     writer.flush()
                     lastFlush = now
