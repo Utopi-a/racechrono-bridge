@@ -1,0 +1,498 @@
+# source: RomRaider logger definition: ROMRAIDER METRIC UNITS LOGGER DEFINITION FILE (VERSION 370) 20211116_191942 [en]
+# generator: scripts/generate_ssm_catalog.py --ecu-id 5104584007
+kind	id	name	ecu_id	addresses	length	capability_index	capability_bit	conv_index	units	storagetype	expr	format
+std	P1	Engine Load (Relative)		0x000007	1	8	7	0	%		x*100/255	0.00
+std	P2	Coolant Temperature		0x000008	1	8	6	0	C		x-40	0
+std	P2	Coolant Temperature		0x000008	1	8	6	1	F		32+9*(x-40)/5	0
+std	P3	A/F Correction #1		0x000009	1	8	5	0	%		(x-128)*100/128	0.00
+std	P4	A/F Learning #1		0x00000A	1	8	4	0	%		(x-128)*100/128	0.00
+std	P5	A/F Correction #2		0x00000B	1	8	3	0	%		(x-128)*100/128	0.00
+std	P6	A/F Learning #2		0x00000C	1	8	2	0	%		(x-128)*100/128	0.00
+std	P7	Manifold Absolute Pressure		0x00000D	1	8	1	0	kPa		x	0
+std	P7	Manifold Absolute Pressure		0x00000D	1	8	1	1	hPa		x*10	0
+std	P7	Manifold Absolute Pressure		0x00000D	1	8	1	2	bar		x/100	0.000
+std	P7	Manifold Absolute Pressure		0x00000D	1	8	1	3	psi		x*37/255	0.00
+std	P7	Manifold Absolute Pressure		0x00000D	1	8	1	4	inHg		x*0.2953	0.00
+std	P7	Manifold Absolute Pressure		0x00000D	1	8	1	5	mmHg		x*7.5	0
+std	P8	Engine Speed		0x00000E	2	8	0	0	rpm		x/4	0
+std	P9	Vehicle Speed		0x000010	1	9	7	0	km/h		x	0
+std	P9	Vehicle Speed		0x000010	1	9	7	1	mph		x*0.621371192	0
+std	P10	Ignition Total Timing		0x000011	1	9	6	0	degrees		(x-128)/2	0.00
+std	P11	Intake Air Temperature		0x000012	1	9	5	0	C		x-40	0
+std	P11	Intake Air Temperature		0x000012	1	9	5	1	F		32+9*(x-40)/5	0
+std	P12	Mass Airflow		0x000013	2	9	4	0	g/s		x/100	0.00
+std	P13	Throttle Opening Angle		0x000015	1	9	3	0	%		x*100/255	0.00
+std	P14	Front O2 Sensor #1		0x000016	2	9	2	0	V		x/200	0.00
+std	P15	Rear O2 Sensor		0x000018	2	9	1	0	V		x/200	0.00
+std	P16	Front O2 Sensor #2		0x00001A	2	9	0	0	V		x/200	0.00
+std	P17	Battery Voltage		0x00001C	1	10	7	0	V		x*8/100	0.00
+std	P18	Mass Airflow Sensor Voltage		0x00001D	1	10	6	0	V		x/50	0.00
+std	P19	Throttle Sensor Voltage		0x00001E	1	10	5	0	V		x/50	0.00
+std	P20	Differential Pressure Sensor Voltage		0x00001F	1	10	4	0	V		x/50	0.00
+std	P21	Fuel Injector #1 Pulse Width		0x000020	1	10	3	0	ms		x*256/1000	0.00
+std	P21	Fuel Injector #1 Pulse Width		0x000020	1	10	3	1	µs		x*256	0.00
+std	P22	Fuel Injector #2 Pulse Width		0x000021	1	10	2	0	ms		x*256/1000	0.00
+std	P22	Fuel Injector #2 Pulse Width		0x000021	1	10	2	1	µs		x*256	0.00
+std	P23	Knock Correction Advance		0x000022	1	10	1	0	degrees		(x-128)/2	0.00
+std	P24	Atmospheric Pressure		0x000023	1	10	0	0	kPa		x	0
+std	P24	Atmospheric Pressure		0x000023	1	10	0	1	hPa		x*10	0
+std	P24	Atmospheric Pressure		0x000023	1	10	0	2	bar		x/100	0.000
+std	P24	Atmospheric Pressure		0x000023	1	10	0	3	psi		x*37/255	0.00
+std	P24	Atmospheric Pressure		0x000023	1	10	0	4	inHg		x*0.2953	0.00
+std	P24	Atmospheric Pressure		0x000023	1	10	0	5	mmHg		x*7.5	0
+std	P25	Manifold Relative Pressure		0x000024	1	11	7	0	kPa		x-128	0
+std	P25	Manifold Relative Pressure		0x000024	1	11	7	1	hPa		(x-128)*10	0
+std	P25	Manifold Relative Pressure		0x000024	1	11	7	2	bar		(x-128)/100	0.000
+std	P25	Manifold Relative Pressure		0x000024	1	11	7	3	psi		(x-128)*37/255	0.00
+std	P26	Pressure Differential Sensor		0x000025	1	11	6	0	kPa		x-128	0
+std	P26	Pressure Differential Sensor		0x000025	1	11	6	1	hPa		(x-128)*10	0
+std	P26	Pressure Differential Sensor		0x000025	1	11	6	2	bar		(x-128)/100	0.000
+std	P26	Pressure Differential Sensor		0x000025	1	11	6	3	psi		(x-128)*37/255	0.00
+std	P27	Fuel Tank Pressure		0x000026	1	11	5	0	kPa		(x-128)/40	0.00
+std	P27	Fuel Tank Pressure		0x000026	1	11	5	1	hPa		(x-128)/4	0
+std	P27	Fuel Tank Pressure		0x000026	1	11	5	2	bar		(x-128)/4000	0.000
+std	P27	Fuel Tank Pressure		0x000026	1	11	5	3	psi		(x-128)*35/10000	0.000
+std	P28	CO Adjustment		0x000027	1	11	4	0	V		x/50	0.00
+std	P29	Learned Ignition Timing		0x000028	1	11	3	0	degrees		(x-128)/2	0.00
+std	P30	Accelerator Pedal Angle		0x000029	1	11	2	0	%		x*100/255	0.00
+std	P31	Fuel Temperature		0x00002A	1	11	1	0	C		x-40	0
+std	P31	Fuel Temperature		0x00002A	1	11	1	1	F		32+9*(x-40)/5	0
+std	P32	Front O2 Heater Current #1		0x00002B	1	11	0	0	A		x*1004/25600	0.00
+std	P33	Rear O2 Heater Current		0x00002C	1	12	7	0	A		x*1004/25600	0.00
+std	P34	Front O2 Heater Current #2		0x00002D	1	12	6	0	A		x*1004/25600	0.00
+std	P35	Fuel Level		0x00002E	1	12	5	0	V		x/50	0.00
+std	P36	Primary Wastegate Duty Cycle		0x000030	1	12	3	0	%		x*100/255	0.00
+std	P37	Secondary Wastegate Duty Cycle		0x000031	1	12	2	0	%		x*100/255	0.00
+std	P38	CPC Valve Duty Ratio		0x000032	1	12	1	0	%		x*100/255	0.00
+std	P39	Tumble Valve Position Sensor Right		0x000033	1	12	0	0	V		x/50	0.00
+std	P40	Tumble Valve Position Sensor Left		0x000034	1	13	7	0	V		x/50	0.00
+std	P41	Idle Speed Control Valve Duty Ratio		0x000035	1	13	6	0	%		x/2	0.00
+std	P42	A/F Lean Correction		0x000036	1	13	5	0	%		x*100/255	0.00
+std	P43	A/F Heater Duty		0x000037	1	13	4	0	%		x*100/255	0.00
+std	P44	Idle Speed Control Valve Step		0x000038	1	13	3	0	steps		x	0
+std	P45	Number of Exh. Gas Recirc. Steps		0x000039	1	13	2	0	steps		x	0
+std	P46	Alternator Duty		0x00003A	1	13	1	0	%		x	0.00
+std	P47	Fuel Pump Duty		0x00003B	1	13	0	0	%		x*100/255	0.00
+std	P48	Intake VVT Advance Angle Right		0x00003C	1	14	7	0	degrees		x-50	0
+std	P49	Intake VVT Advance Angle Left		0x00003D	1	14	6	0	degrees		x-50	0
+std	P50	Intake OCV Duty Right		0x00003E	1	14	5	0	%		x*100/255	0.00
+std	P51	Intake OCV Duty Left		0x00003F	1	14	4	0	%		x*100/255	0.00
+std	P52	Intake OCV Current Right		0x000040	1	14	3	0	mA		x*32	0
+std	P53	Intake OCV Current Left		0x000041	1	14	2	0	mA		x*32	0
+std	P54	A/F Sensor #1 Current		0x000042	1	14	1	0	mA		(x-128)/8	0.00
+std	P55	A/F Sensor #2 Current		0x000043	1	14	0	0	mA		(x-128)/8	0.00
+std	P56	A/F Sensor #1 Resistance		0x000044	1	15	7	0	ohm		x	0
+std	P57	A/F Sensor #2 Resistance		0x000045	1	15	6	0	ohm		x	0
+std	P58	A/F Sensor #1		0x000046	1	15	5	0	Lambda		x/128	0.00
+std	P58	A/F Sensor #1		0x000046	1	15	5	1	AFR		x/128*14.7	0.00
+std	P59	A/F Sensor #2		0x000047	1	15	4	0	Lambda		x/128	0.00
+std	P59	A/F Sensor #2		0x000047	1	15	4	1	AFR		x/128*14.7	0.00
+std	P60	Gear Position		0x00004A	1	16	5	0	gear		x+1	0
+std	P61	A/F Sensor #1 Heater Current		0x000053	1	17	4	0	A		x/10	0.00
+std	P62	A/F Sensor #2 Heater Current		0x000054	1	17	3	0	A		x/10	0.00
+std	P63	Roughness Monitor Cylinder #1		0x0000CE	1	55	7	0	misfire count		x	0
+std	P64	Roughness Monitor Cylinder #2		0x0000CF	1	55	6	0	misfire count		x	0
+std	P65	A/F Correction #3 (16-bit ECU)		0x0000D0	1	15	3	0	%		(x-128)*100/128	0.00
+std	P66	A/F Learning #3		0x0000D1	1	15	2	0	%		(x-128)*100/128	0.00
+std	P67	Rear O2 Heater Voltage		0x0000D2	1	15	1	0	V		x/50	0.00
+std	P68	A/F Adjustment Voltage		0x0000D3	1	15	0	0	V		x/50	0.00
+std	P69	Roughness Monitor Cylinder #3		0x0000D8	1	55	5	0	misfire count		x	0
+std	P70	Roughness Monitor Cylinder #4		0x0000D9	1	55	4	0	misfire count		x	0
+std	P71	Throttle Motor Duty		0x0000FA	1	38	5	0	%		(x-128)*100/128	0.00
+std	P72	Throttle Motor Voltage		0x0000FB	1	38	4	0	V		x*8/100	0.00
+std	P73	Sub Throttle Sensor		0x000100	1	40	7	0	V		x/50	0.00
+std	P74	Main Throttle Sensor		0x000101	1	40	6	0	V		x/50	0.00
+std	P75	Sub Accelerator Sensor		0x000102	1	40	5	0	V		x/50	0.00
+std	P76	Main Accelerator Sensor		0x000103	1	40	4	0	V		x/50	0.00
+std	P77	Brake Booster Pressure		0x000104	1	40	3	0	kPa		x	0
+std	P77	Brake Booster Pressure		0x000104	1	40	3	1	hPa		x*10	0
+std	P77	Brake Booster Pressure		0x000104	1	40	3	2	bar		x/100	0.000
+std	P77	Brake Booster Pressure		0x000104	1	40	3	3	psi		x*37/255	0.00
+std	P78	Fuel Pressure (High)		0x000105	1	40	2	0	kPa		x/25*1000	0.00
+std	P78	Fuel Pressure (High)		0x000105	1	40	2	1	MPa		x/25	0.00
+std	P78	Fuel Pressure (High)		0x000105	1	40	2	2	bar		x/25*10	0.000
+std	P78	Fuel Pressure (High)		0x000105	1	40	2	3	psi		x/25*145.0377	0.00
+std	P79	Exhaust Gas Temperature		0x000106	1	40	1	0	C		(x+40)*5	0
+std	P79	Exhaust Gas Temperature		0x000106	1	40	1	1	F		32+9*(x+40)	0
+std	P80	Cold Start Injector (Air Pump)		0x000108	1	41	7	0	ms		x*256/1000	0.00
+std	P80	Cold Start Injector (Air Pump)		0x000108	1	41	7	1	µs		x*256	0.00
+std	P81	SCV Step		0x000109	1	41	6	0	steps		x	0
+std	P82	Memorised Cruise Speed		0x00010A	1	41	5	0	km/h		x	0
+std	P82	Memorised Cruise Speed		0x00010A	1	41	5	1	mph		x*0.621371192	0
+std	P83	Exhaust VVT Advance Angle Right		0x000118	1	43	7	0	degrees		x-50	0
+std	P84	Exhaust VVT Advance Angle Left		0x000119	1	43	6	0	degrees		x-50	0
+std	P85	Exhaust OCV Duty Right		0x00011A	1	43	5	0	%		x*100/255	0.00
+std	P86	Exhaust OCV Duty Left		0x00011B	1	43	4	0	%		x*100/255	0.00
+std	P87	Exhaust OCV Current Right		0x00011C	1	43	3	0	mA		x*32	0
+std	P88	Exhaust OCV Current Left		0x00011D	1	43	2	0	mA		x*32	0
+std	P89	A/F Correction #3 (32-bit ECU)		0x0000D0	1	15	3	0	%		(x*.078125)-5	0.00
+std	P90	IAM		0x0000F9	1	55	0	0	multiplier		x/16	0.0000
+std	P91	Fine Learning Knock Correction		0x000199	1	55	0	0	degrees		(x*0.25)-32	0.00
+std	P92	Radiator Fan Control		0x00002F	1	12	4	0	%		x	0
+std	P93	Front Wheel Speed		0x000048	1	16	7	0	km/h		x	0
+std	P93	Front Wheel Speed		0x000048	1	16	7	1	mph		x*0.621371192	0
+std	P94	ATF Temperature		0x000049	1	16	6	0	index		x	0
+std	P95	Line Pressure Duty Ratio		0x00004B	1	16	4	0	%		x/2	0.0
+std	P96	Lock Up Duty Ratio		0x00004C	1	16	3	0	%		x/2	0.0
+std	P97	Transfer Duty Ratio		0x00004D	1	16	2	0	%		x/2	0.0
+std	P98	Throttle Sensor Voltage		0x00004E	1	16	1	0	V		x/45	0.00
+std	P99	Turbine Revolution Speed		0x00004F	1	16	0	0	rpm		x*32	0
+std	P100	Brake Clutch Duty Ratio		0x000050	1	17	7	0	%		x/2	0.0
+std	P101	Rear Wheel Speed		0x000051	1	17	6	0	km/h		x	0
+std	P101	Rear Wheel Speed		0x000051	1	17	6	1	mph		x*0.621371192	0
+std	P102	Manifold Pressure Sensor Voltage		0x000052	1	17	5	0	V		x/50	0.00
+std	P103	Lateral G Sensor Voltage		0x000055	1	17	2	0	V		x/50	0.00
+std	P104	ATF Temperature		0x000056	1	17	1	0	C		x-50	0
+std	P104	ATF Temperature		0x000056	1	17	1	1	F		32+9*(x-50)/5	0
+std	P105	Low Clutch Duty		0x000057	1	17	0	0	%		x/2	0.0
+std	P106	High Clutch Duty		0x000058	1	18	7	0	%		x/2	0.0
+std	P107	Load and Reverse Brake (L and RB) Duty		0x000059	1	18	6	0	%		x/2	0.0
+std	P108	ATF Temperature 2		0x00005A	1	18	5	0	C		x-50	0
+std	P108	ATF Temperature 2		0x00005A	1	18	5	1	F		32+9*(x-50)/5	0
+std	P109	Voltage Center Differential Switch		0x00005B	1	18	4	0	V		x/51	0.00
+std	P110	AT Turbine Speed 1		0x00005C	1	18	3	0	rpm		x*32	0
+std	P111	AT Turbine Speed 2		0x00005D	1	18	2	0	rpm		x*32	0
+std	P112	Center Differential Real Current		0x00005E	1	18	1	0	A		x/32	0.00
+std	P113	Center Differential Indicate Current		0x00005F	1	18	0	0	A		x/32	0.00
+std	P114	SI-Drive Mode		0x00016A	1	38	7	0	index		x	0
+std	P115	Throttle Sensor Closed Voltage		0x00016B	1	38	6	0	V		x/50	0.00
+std	P116	Exhaust Gas Temperature 2		0x000107	1	40	0	0	C		x*5+200	0
+std	P116	Exhaust Gas Temperature 2		0x000107	1	40	0	1	F		32+9*(x*5+200)/5	0
+std	P117	Air/Fuel Correction #4		0x00010B	1	41	4	0	%		(x-64)/128*10	0.00
+std	P118	Air/Fuel Learning #4		0x00010C	1	41	3	0	%		(x-128)/128*100	0.00
+std	P119	Fuel Level Sensor Resistance		0x00010D	1	41	2	0	ohm		x*4/2	0.0
+std	P120	Estimated odometer		0x00010E	2	41	1	0	km		x*2	0
+std	P120	Estimated odometer		0x00010E	2	41	1	1	miles		x*1.242742384	0
+std	P121	Fuel Tank Air Pressure		0x000172	2	41	0	0	MPa		x/100	0.00
+std	P121	Fuel Tank Air Pressure		0x000172	2	41	0	1	psi		x*14.50377	0.00
+std	P121	Fuel Tank Air Pressure		0x000172	2	41	0	2	bar		x/10	0.0
+std	P122	Oil Temperature		0x000113	1	42	4	0	C		x-40	0
+std	P122	Oil Temperature		0x000113	1	42	4	1	F		32+9*(x-40)/5	0
+std	P123	Oil Switching Solenoid Valve (OSV) Duty (Right)		0x000114	1	42	3	0	%		x/255*100	0.0
+std	P124	Oil Switching Solenoid Valve (OSV) Duty (Left)		0x000115	1	42	2	0	%		x/255*100	0.0
+std	P125	Oil Switching Solenoid Valve (OSV) Current (Right)		0x000116	1	42	1	0	mA		x*32	0
+std	P126	Oil Switching Solenoid Valve (OSV) Current (Left)		0x000117	1	42	0	0	mA		x*32	0
+std	P127	VVL Lift Mode		0x00011E	1	43	1	0	raw ecu value		x	0
+std	P128	H and LR/C Solenoid Valve Current		0x000140	1	50	7	0	A		x/255	0.0000
+std	P129	D/C Solenoid Valve Current		0x000141	1	50	6	0	A		x/255	0.0000
+std	P130	F/B Solenoid Valve Current		0x000142	1	50	5	0	A		x/255	0.0000
+std	P131	I/C Solenoid Valve Current		0x000143	1	50	4	0	A		x/255	0.0000
+std	P132	P/L Solenoid Valve Current		0x000144	1	50	3	0	A		x/255	0.0000
+std	P133	L/U Solenoid Valve Current		0x000145	1	50	2	0	A		x/255	0.0000
+std	P134	AWD Solenoid Valve Current		0x000146	1	50	1	0	A		x/255	0.0000
+std	P135	Yaw Rate Sensor Voltage		0x000147	1	50	0	0	V		x/51	0.00
+std	P136	H and LR/C Solenoid Valve Pressure		0x000148	1	51	7	0	kPa		x*10	0
+std	P136	H and LR/C Solenoid Valve Pressure		0x000148	1	51	7	1	hPa		x*100	0
+std	P136	H and LR/C Solenoid Valve Pressure		0x000148	1	51	7	2	bar		x*0.1	0.0
+std	P136	H and LR/C Solenoid Valve Pressure		0x000148	1	51	7	3	psi		x*1.450377	0.00
+std	P137	D/C Solenoid Valve Pressure		0x000149	1	51	6	0	kPa		x*10	0
+std	P137	D/C Solenoid Valve Pressure		0x000149	1	51	6	1	hPa		x*100	0
+std	P137	D/C Solenoid Valve Pressure		0x000149	1	51	6	2	bar		x*0.1	0.0
+std	P137	D/C Solenoid Valve Pressure		0x000149	1	51	6	3	psi		x*1.450377	0.00
+std	P138	F/B Solenoid Valve Pressure		0x00014A	1	51	5	0	kPa		x*10	0
+std	P138	F/B Solenoid Valve Pressure		0x00014A	1	51	5	1	hPa		x*100	0
+std	P138	F/B Solenoid Valve Pressure		0x00014A	1	51	5	2	bar		x*0.1	0.0
+std	P138	F/B Solenoid Valve Pressure		0x00014A	1	51	5	3	psi		x*1.450377	0.00
+std	P139	I/C Solenoid Valve Pressure		0x00014B	1	51	4	0	kPa		x*10	0
+std	P139	I/C Solenoid Valve Pressure		0x00014B	1	51	4	1	hPa		x*100	0
+std	P139	I/C Solenoid Valve Pressure		0x00014B	1	51	4	2	bar		x*0.1	0.0
+std	P139	I/C Solenoid Valve Pressure		0x00014B	1	51	4	3	psi		x*1.450377	0.00
+std	P140	P/L Solenoid Valve Pressure		0x00014C	1	51	3	0	kPa		x*10	0
+std	P140	P/L Solenoid Valve Pressure		0x00014C	1	51	3	1	hPa		x*100	0
+std	P140	P/L Solenoid Valve Pressure		0x00014C	1	51	3	2	bar		x*0.1	0.0
+std	P140	P/L Solenoid Valve Pressure		0x00014C	1	51	3	3	psi		x*1.450377	0.00
+std	P141	L/U Solenoid Valve Pressure		0x00014D	1	51	2	0	kPa		x*10	0
+std	P141	L/U Solenoid Valve Pressure		0x00014D	1	51	2	1	hPa		x*100	0
+std	P141	L/U Solenoid Valve Pressure		0x00014D	1	51	2	2	bar		x*0.1	0.0
+std	P141	L/U Solenoid Valve Pressure		0x00014D	1	51	2	3	psi		x*1.450377	0.00
+std	P142	AWD Solenoid Valve Pressure		0x00014E	1	51	1	0	kPa		x*10	0
+std	P142	AWD Solenoid Valve Pressure		0x00014E	1	51	1	1	hPa		x*100	0
+std	P142	AWD Solenoid Valve Pressure		0x00014E	1	51	1	2	bar		x*0.1	0.0
+std	P142	AWD Solenoid Valve Pressure		0x00014E	1	51	1	3	psi		x*1.450377	0.00
+std	P143	Yaw Rate and  G Sensor Reference Voltage		0x00014F	1	51	0	0	V		x/51	0.00
+std	P144	Wheel Speed Front Right		0x00013C	1	52	7	0	km/h		x	0
+std	P144	Wheel Speed Front Right		0x00013C	1	52	7	1	mph		x*0.621371192	0
+std	P145	Wheel Speed Front Left		0x00013D	1	52	6	0	km/h		x	0
+std	P145	Wheel Speed Front Left		0x00013D	1	52	6	1	mph		x*0.621371192	0
+std	P146	Wheel Speed Rear Right		0x00013E	1	52	5	0	km/h		x	0
+std	P146	Wheel Speed Rear Right		0x00013E	1	52	5	1	mph		x*0.621371192	0
+std	P147	Wheel Speed Rear Left		0x00013F	1	52	4	0	km/h		x	0
+std	P147	Wheel Speed Rear Left		0x00013F	1	52	4	1	mph		x*0.621371192	0
+std	P148	Steering Angle Sensor		0x00008D;0x00015A	1	52	3	0	degrees	int16	x	0
+std	P149	Fwd/B Solenoid Valve Current		0x000185	1	52	1	0	A		x/255	0.0000
+std	P150	Fwd/B Solenoid Valve Target Pressure		0x000186	1	52	0	0	kPa		x*10	0
+std	P150	Fwd/B Solenoid Valve Target Pressure		0x000186	1	52	0	1	hPa		x*100	0
+std	P150	Fwd/B Solenoid Valve Target Pressure		0x000186	1	52	0	2	bar		x*0.1	0.0
+std	P150	Fwd/B Solenoid Valve Target Pressure		0x000186	1	52	0	3	psi		x*1.450377	0.00
+std	P151	Roughness Monitor Cylinder #5		0x0000EF	1	55	3	0	misfire count		x	0
+std	P152	Roughness Monitor Cylinder #6		0x0000F8	1	55	2	0	misfire count		x	0
+std	P153	Learned Ignition Timing Correction		0x0000F9	1	55	1	0	degrees		x/16	0.0
+std	P154	Fuel Tank Pressure		0x00019A	1	59	7	0	kPa		(x-128)/20	0.00
+std	P154	Fuel Tank Pressure		0x00019A	1	59	7	1	hPa		(x-128)/2	0.00
+std	P154	Fuel Tank Pressure		0x00019A	1	59	7	2	bar		(x-128)/2000	0.0000
+std	P154	Fuel Tank Pressure		0x00019A	1	59	7	3	psi		(x-128)*0.007251885	0.000
+std	P155	Main Injection Period		0x0001E1	1	60	7	0	°CA		x/5-15	0.0
+std	P156	Final Injection Amount		0x0001E2	2	60	6	0	mm³/st		x/256	0.0000
+std	P157	Number of Times Injected		0x0001E4	1	60	5	0	count		x	0
+std	P158	Target Intake Manifold Pressure		0x0001E5	1	60	4	0	kPa		x	0
+std	P158	Target Intake Manifold Pressure		0x0001E5	1	60	4	1	hPa		x*10	0
+std	P158	Target Intake Manifold Pressure		0x0001E5	1	60	4	2	bar		x*0.01	0.00
+std	P158	Target Intake Manifold Pressure		0x0001E5	1	60	4	3	psi		x*0.1450377	0.000
+std	P159	Target Intake Air Amount		0x0001E6	1	60	3	0	mg/cyl		x*10	0
+std	P160	Air Mass		0x0001E7	1	60	2	0	mg/cyl		x*10	0
+std	P161	Exhaust Gas Recirculation (EGR) Target Valve Opening Angle		0x0001E8	1	60	1	0	degrees		x-50	0
+std	P162	Exhaust Gas Recirculation (EGR) Valve Opening Angle		0x0001E9	1	60	0	0	degrees		x-50	0
+std	P163	Exhaust Gas Recirculation (EGR) Duty		0x0001EA	1	61	7	0	%		x	0
+std	P164	Common Rail Target Pressure		0x0001EB	1	61	6	0	MPa		x	0
+std	P164	Common Rail Target Pressure		0x0001EB	1	61	6	1	bar		x*10	0
+std	P164	Common Rail Target Pressure		0x0001EB	1	61	6	2	psi		x*145.0377	0
+std	P165	Common Rail Pressure		0x0001EC	1	61	5	0	MPa		x	0
+std	P165	Common Rail Pressure		0x0001EC	1	61	5	1	bar		x*10	0
+std	P165	Common Rail Pressure		0x0001EC	1	61	5	2	psi		x*145.0377	0
+std	P166	Intake Air Temperature (combined)		0x0001ED	1	61	4	0	C		x-40	0
+std	P166	Intake Air Temperature (combined)		0x0001ED	1	61	4	1	F		32+9*(x-40)/5	0
+std	P167	Target Engine Speed		0x0001EE	2	61	3	0	rpm		x/4	0
+std	P168	Boost Pressure Feedback		0x0001F0	1	61	2	0	%		x-128	0
+std	P169	Electric Power Steering Current		0x0001F5	1	61	1	0	A		x	0
+std	P170	Fuel Pump Suction Control Valve Current (Target)		0x0001F6	2	61	0	0	mA		x	0
+std	P171	Yaw Rate		0x0001F1	1	62	7	0	degrees/s	int8	x*0.19118	0
+std	P172	Lateral G		0x0001F2	1	62	6	0	m/s²	int8	x*1.0862	0.00
+std	P173	Drivers Control Center Differential (DCCD) Torque Allocation		0x0001F3	1	62	5	0	raw ecu value		x	0
+std	P174	Drivers Control Center Differential (DCCD) Mode		0x0001F4	1	62	4	0	raw ecu value		x	0
+std	P175	Fuel Pump Suction Control Valve Current (Actual)		0x0001F8	2	63	7	0	mA		x	0
+std	P176	Mileage after Injector Learning		0x0001FA	2	63	6	0	km		x*5	0
+std	P176	Mileage after Injector Learning		0x0001FA	2	63	6	1	miles		x*3.10685596	0
+std	P177	Mileage after Injector Replacement		0x000204	2	63	5	0	km		x*5	0
+std	P177	Mileage after Injector Replacement		0x000204	2	63	5	1	miles		x*3.10685596	0
+std	P178	Interior Heater		0x000270	1	63	4	0	steps		x	0
+std	P179	Quantity Correction Cylinder #1		0x00025D	1	63	3	0	µs		(x-100)*10	0.0
+std	P179	Quantity Correction Cylinder #1		0x00025D	1	63	3	1	ms		(x-100)/100	0.000
+std	P179	Quantity Correction Cylinder #1		0x00025D	1	63	3	2	sec		(x-100)/100000	0.000000
+std	P180	Quantity Correction Cylinder #2		0x00025E	1	63	2	0	µs		(x-100)*10	0.0
+std	P180	Quantity Correction Cylinder #2		0x00025E	1	63	2	1	ms		(x-100)/100	0.000
+std	P180	Quantity Correction Cylinder #2		0x00025E	1	63	2	2	sec		(x-100)/100000	0.000000
+std	P181	Quantity Correction Cylinder #3		0x00025F	1	63	1	0	µs		(x-100)*10	0.0
+std	P181	Quantity Correction Cylinder #3		0x00025F	1	63	1	1	ms		(x-100)/100	0.000
+std	P181	Quantity Correction Cylinder #3		0x00025F	1	63	1	2	sec		(x-100)/100000	0.000000
+std	P182	Quantity Correction Cylinder #4		0x000260	1	63	0	0	µs		(x-100)*10	0.0
+std	P182	Quantity Correction Cylinder #4		0x000260	1	63	0	1	ms		(x-100)/100	0.000
+std	P182	Quantity Correction Cylinder #4		0x000260	1	63	0	2	sec		(x-100)/100000	0.000000
+std	P183	Battery Current		0x000271	1	64	7	0	A		x-128	0
+std	P184	Battery Temperature		0x000273	1	64	6	0	C		x-40	0
+std	P184	Battery Temperature		0x000273	1	64	6	1	F		32+9*(x-40)/5	0
+std	P185	Alternator Control Mode		0x000272	1	64	5	0	index		x	0
+std	P186	Cumulative Ash Ratio		0x000275	1	70	7	0	%		x	0
+std	P187	Pressure Difference between Diesel Particulate Filter (DPF) Inlet and Outlet		0x000276	1	70	6	0	kPa		x	0
+std	P187	Pressure Difference between Diesel Particulate Filter (DPF) Inlet and Outlet		0x000276	1	70	6	1	hPa		x*10	0
+std	P187	Pressure Difference between Diesel Particulate Filter (DPF) Inlet and Outlet		0x000276	1	70	6	2	bar		x*0.01	0.00
+std	P187	Pressure Difference between Diesel Particulate Filter (DPF) Inlet and Outlet		0x000276	1	70	6	3	psi		x*14.50377	0
+std	P188	Exhaust Gas Temperature at Catalyst Inlet		0x000277	1	70	5	0	C		x*5-40	0
+std	P188	Exhaust Gas Temperature at Catalyst Inlet		0x000277	1	70	5	1	F		32+9*(x*5-40)/5	0
+std	P189	Exhaust Gas Temperature at Diesel Particulate Filter (DPF) Inlet		0x000278	1	70	4	0	C		x*5-40	0
+std	P189	Exhaust Gas Temperature at Diesel Particulate Filter (DPF) Inlet		0x000278	1	70	4	1	F		32+9*(x*5-40)/5	0
+std	P190	Estimated Catalyst Temperature		0x000279	1	70	3	0	C		x*5-40	0
+std	P190	Estimated Catalyst Temperature		0x000279	1	70	3	1	F		32+9*(x*5-40)/5	0
+std	P191	Estimated Temperature of the Diesel Particulate Filter (DPF)		0x00027A	1	70	2	0	C		x*5-40	0
+std	P191	Estimated Temperature of the Diesel Particulate Filter (DPF)		0x00027A	1	70	2	1	F		32+9*(x*5-40)/5	0
+std	P192	Soot Accumulation Ratio		0x00027B	1	70	1	0	%		x	0
+std	P193	Oil Dilution Ratio		0x00027C	1	70	0	0	%		x	0
+std	P194	Front-Rear Wheel Rotation Ratio		0x000293	1	71	7	0	%		x/128	0.000
+std	P195	ABS/VDC Front Wheel Mean Wheel Speed		0x000294	1	71	6	0	km/h		x*230/255	0
+std	P195	ABS/VDC Front Wheel Mean Wheel Speed		0x000294	1	71	6	1	mph		x*143/255	0
+std	P196	ABS/VDC Rear Wheel Mean Wheel Speed		0x000295	1	71	5	0	km/h		x*230/255	0
+std	P196	ABS/VDC Rear Wheel Mean Wheel Speed		0x000295	1	71	5	1	mph		x*143/255	0
+std	P197	Automatic Transmission Fluid (ATF) Deterioration Degree		0x000296	2	71	4	0	%		x*40/13107	0
+std	P198	Accumulated Count of Overspeed Instances (Very High RPM)		0x000298	1	72	7	0	Time		x	0
+std	P199	Accumulated Count of Overspeed Instances (High RPM)		0x000299	1	72	6	0	Time		x	0
+std	P204	Actual Common Rail Pressure (Time Synchronized)		0x00021F	1	72	5	0	MPa		x	0
+std	P204	Actual Common Rail Pressure (Time Synchronized)		0x00021F	1	72	5	1	bar		x*10	0
+std	P204	Actual Common Rail Pressure (Time Synchronized)		0x00021F	1	72	5	2	psi		x*145.0377	0
+std	P205	Estimated Distance to Oil Change		0x00029A	1	72	4	0	km		x*100	0
+std	P205	Estimated Distance to Oil Change		0x00029A	1	72	4	1	miles		x*62	0
+std	P206	Running Distance since last Diesel Particulate Filter (DPF) Regeneration		0x00029B	2	72	3	0	km		x	0
+std	P206	Running Distance since last Diesel Particulate Filter (DPF) Regeneration		0x00029B	2	72	3	1	miles		x*0.621371192	0
+std	P207	Diesel Particulate Filter (DPF) Regeneration Count		0x00029D	2	72	2	0	Times		x	0
+std	P208	Micro-Quantity-Injection Final Learning Value 1-1		0x00023D	1	72	1	0	µs		(x-128)*5	0.0
+std	P208	Micro-Quantity-Injection Final Learning Value 1-1		0x00023D	1	72	1	1	ms		(x-128)/200	0.000
+std	P208	Micro-Quantity-Injection Final Learning Value 1-1		0x00023D	1	72	1	2	sec		(x-128)/200000	0.000000
+std	P209	Micro-Quantity-Injection Final Learning Value 1-2		0x00023E	1	72	0	0	µs		(x-128)*5	0.0
+std	P209	Micro-Quantity-Injection Final Learning Value 1-2		0x00023E	1	72	0	1	ms		(x-128)/200	0.000
+std	P209	Micro-Quantity-Injection Final Learning Value 1-2		0x00023E	1	72	0	2	sec		(x-128)/200000	0.000000
+std	P210	Micro-Quantity-Injection Final Learning Value 1-3		0x00023F	1	73	7	0	µs		(x-128)*5	0.0
+std	P210	Micro-Quantity-Injection Final Learning Value 1-3		0x00023F	1	73	7	1	ms		(x-128)/200	0.000
+std	P210	Micro-Quantity-Injection Final Learning Value 1-3		0x00023F	1	73	7	2	sec		(x-128)/200000	0.000000
+std	P211	Micro-Quantity-Injection Final Learning Value 1-4		0x000240	1	73	6	0	µs		(x-128)*5	0.0
+std	P211	Micro-Quantity-Injection Final Learning Value 1-4		0x000240	1	73	6	1	ms		(x-128)/200	0.000
+std	P211	Micro-Quantity-Injection Final Learning Value 1-4		0x000240	1	73	6	2	sec		(x-128)/200000	0.000000
+std	P212	Micro-Quantity-Injection Final Learning Value 2-1		0x000241	1	73	5	0	µs		(x-128)*5	0.0
+std	P212	Micro-Quantity-Injection Final Learning Value 2-1		0x000241	1	73	5	1	ms		(x-128)/200	0.000
+std	P212	Micro-Quantity-Injection Final Learning Value 2-1		0x000241	1	73	5	2	sec		(x-128)/200000	0.000000
+std	P213	Micro-Quantity-Injection Final Learning Value 2-2		0x000242	1	73	4	0	µs		(x-128)*5	0.0
+std	P213	Micro-Quantity-Injection Final Learning Value 2-2		0x000242	1	73	4	1	ms		(x-128)/200	0.000
+std	P213	Micro-Quantity-Injection Final Learning Value 2-2		0x000242	1	73	4	2	sec		(x-128)/200000	0.000000
+std	P214	Micro-Quantity-Injection Final Learning Value 2-3		0x000243	1	73	3	0	µs		(x-128)*5	0.0
+std	P214	Micro-Quantity-Injection Final Learning Value 2-3		0x000243	1	73	3	1	ms		(x-128)/200	0.000
+std	P214	Micro-Quantity-Injection Final Learning Value 2-3		0x000243	1	73	3	2	sec		(x-128)/200000	0.000000
+std	P215	Micro-Quantity-Injection Final Learning Value 2-4		0x000244	1	73	2	0	µs		(x-128)*5	0.0
+std	P215	Micro-Quantity-Injection Final Learning Value 2-4		0x000244	1	73	2	1	ms		(x-128)/200	0.000
+std	P215	Micro-Quantity-Injection Final Learning Value 2-4		0x000244	1	73	2	2	sec		(x-128)/200000	0.000000
+std	P216	Micro-Quantity-Injection Final Learning Value 3-1		0x000245	1	73	1	0	µs		(x-128)*5	0.0
+std	P216	Micro-Quantity-Injection Final Learning Value 3-1		0x000245	1	73	1	1	ms		(x-128)/200	0.000
+std	P216	Micro-Quantity-Injection Final Learning Value 3-1		0x000245	1	73	1	2	sec		(x-128)/200000	0.000000
+std	P217	Micro-Quantity-Injection Final Learning Value 3-2		0x000246	1	73	0	0	µs		(x-128)*5	0.0
+std	P217	Micro-Quantity-Injection Final Learning Value 3-2		0x000246	1	73	0	1	ms		(x-128)/200	0.000
+std	P217	Micro-Quantity-Injection Final Learning Value 3-2		0x000246	1	73	0	2	sec		(x-128)/200000	0.000000
+std	P218	Micro-Quantity-Injection Final Learning Value 3-3		0x000247	1	74	7	0	µs		(x-128)*5	0.0
+std	P218	Micro-Quantity-Injection Final Learning Value 3-3		0x000247	1	74	7	1	ms		(x-128)/200	0.000
+std	P218	Micro-Quantity-Injection Final Learning Value 3-3		0x000247	1	74	7	2	sec		(x-128)/200000	0.000000
+std	P219	Micro-Quantity-Injection Final Learning Value 3-4		0x000248	1	74	6	0	µs		(x-128)*5	0.0
+std	P219	Micro-Quantity-Injection Final Learning Value 3-4		0x000248	1	74	6	1	ms		(x-128)/200	0.000
+std	P219	Micro-Quantity-Injection Final Learning Value 3-4		0x000248	1	74	6	2	sec		(x-128)/200000	0.000000
+std	P220	Micro-Quantity-Injection Final Learning Value 4-1		0x000249	1	74	5	0	µs		(x-128)*5	0.0
+std	P220	Micro-Quantity-Injection Final Learning Value 4-1		0x000249	1	74	5	1	ms		(x-128)/200	0.000
+std	P220	Micro-Quantity-Injection Final Learning Value 4-1		0x000249	1	74	5	2	sec		(x-128)/200000	0.000000
+std	P221	Micro-Quantity-Injection Final Learning Value 4-2		0x00024A	1	74	4	0	µs		(x-128)*5	0.0
+std	P221	Micro-Quantity-Injection Final Learning Value 4-2		0x00024A	1	74	4	1	ms		(x-128)/200	0.000
+std	P221	Micro-Quantity-Injection Final Learning Value 4-2		0x00024A	1	74	4	2	sec		(x-128)/200000	0.000000
+std	P222	Micro-Quantity-Injection Final Learning Value 4-3		0x00024B	1	74	3	0	µs		(x-128)*5	0.0
+std	P222	Micro-Quantity-Injection Final Learning Value 4-3		0x00024B	1	74	3	1	ms		(x-128)/200	0.000
+std	P222	Micro-Quantity-Injection Final Learning Value 4-3		0x00024B	1	74	3	2	sec		(x-128)/200000	0.000000
+std	P223	Micro-Quantity-Injection Final Learning Value 4-4		0x00024C	1	74	2	0	µs		(x-128)*5	0.0
+std	P223	Micro-Quantity-Injection Final Learning Value 4-4		0x00024C	1	74	2	1	ms		(x-128)/200	0.000
+std	P223	Micro-Quantity-Injection Final Learning Value 4-4		0x00024C	1	74	2	2	sec		(x-128)/200000	0.000000
+std	P224	Micro-Quantity-Injection Final Learning Value 5-1		0x00024D	1	74	1	0	µs		(x-128)*5	0.0
+std	P224	Micro-Quantity-Injection Final Learning Value 5-1		0x00024D	1	74	1	1	ms		(x-128)/200	0.000
+std	P224	Micro-Quantity-Injection Final Learning Value 5-1		0x00024D	1	74	1	2	sec		(x-128)/200000	0.000000
+std	P225	Micro-Quantity-Injection Final Learning Value 5-2		0x00024E	1	74	0	0	µs		(x-128)*5	0.0
+std	P225	Micro-Quantity-Injection Final Learning Value 5-2		0x00024E	1	74	0	1	ms		(x-128)/200	0.000
+std	P225	Micro-Quantity-Injection Final Learning Value 5-2		0x00024E	1	74	0	2	sec		(x-128)/200000	0.000000
+std	P226	Micro-Quantity-Injection Final Learning Value 5-3		0x00024F	1	76	7	0	µs		(x-128)*5	0.0
+std	P226	Micro-Quantity-Injection Final Learning Value 5-3		0x00024F	1	76	7	1	ms		(x-128)/200	0.000
+std	P226	Micro-Quantity-Injection Final Learning Value 5-3		0x00024F	1	76	7	2	sec		(x-128)/200000	0.000000
+std	P227	Micro-Quantity-Injection Final Learning Value 5-4		0x000250	1	76	6	0	µs		(x-128)*5	0.0
+std	P227	Micro-Quantity-Injection Final Learning Value 5-4		0x000250	1	76	6	1	ms		(x-128)/200	0.000
+std	P227	Micro-Quantity-Injection Final Learning Value 5-4		0x000250	1	76	6	2	sec		(x-128)/200000	0.000000
+std	P228	Individual Pump Difference Learning Value		0x000238	2	76	5	0	mA		x-1000	0
+std	P229	Final Main Injection Period		0x000257	2	76	4	0	µs		x	0
+std	P229	Final Main Injection Period		0x000257	2	76	4	1	ms		x/1000	0
+std	P233	Pre-Injection Final Period		0x000255	2	60	6	0	µs		x	0
+std	P233	Pre-Injection Final Period		0x000255	2	60	6	1	ms		x/1000	0
+std	P234	Pre-Injection Amount		0x00022F	2	60	6	0	mm³/st		x/256-30	0.0000
+std	P235	Pre-Injection Interval		0x000231	1	60	6	0	°CA		x/50	0.00
+std	P236	Cumulative oil diesel entry		0x0002A2	1	60	6	0	g		x*5	0.00
+std	P238	Final Initial Torque		0x000232	2	60	6	0	Nm		x-50	0
+std	P239	Global Timing User Adjustment Value		0x00006F	1	8	0	0	degrees		0-x	0
+std	P240	Engine Idle Speed User Adjustment (A/C off)		0x000070	1	8	0	0	rpm		x*25-3200	0
+std	P241	Engine Idle Speed User Adjustment (A/C on)		0x000071	1	8	0	0	rpm		x*25-3200	0
+std	P244	Secondary Air Piping Pressure		0x000108	1	41	7	0	kPa		x	0
+std	P244	Secondary Air Piping Pressure		0x000108	1	41	7	1	hPa		x*10	0
+std	P244	Secondary Air Piping Pressure		0x000108	1	41	7	2	bar		x/100	0.000
+std	P244	Secondary Air Piping Pressure		0x000108	1	41	7	3	psi		x*37/255	0.00
+std	P245	Secondary Air Flow		0x000182	2	41	6	0	g/s		x/100	0.00
+ext	E31	IAM (4-byte)*	5104584007	0xFF2538	4			0	multiplier	float	x	0.0000
+ext	E32	Engine Load (4-Byte)*	5104584007	0xFF6C9C	4			0	g/rev	float	x	0.00
+ext	E33	CL/OL Fueling*	5104584007	0xFF9675	1			0	status		x+6	0
+ext	E34	Turbo Dynamics Integral (4-byte)*	5104584007	0xFF645C	4			0	absolute %	float	x	0.00
+ext	E35	Boost Error*	5104584007	0xFF6450	4			0	kPa	float	x*0.1333224	0.00
+ext	E35	Boost Error*	5104584007	0xFF6450	4			1	psi	float	x*0.01933677	0.00
+ext	E35	Boost Error*	5104584007	0xFF6450	4			2	bar	float	x*0.001333224	0.000
+ext	E35	Boost Error*	5104584007	0xFF6450	4			3	mmHg	float	x	0
+ext	E36	Target Boost (4-byte)*	5104584007	0xFF6454	4			0	kPa absolute		x*0.1333224	0.00
+ext	E36	Target Boost (4-byte)*	5104584007	0xFF6454	4			1	psi relative sea level	float	(x-760)*0.01933677	0.00
+ext	E36	Target Boost (4-byte)*	5104584007	0xFF6454	4			2	psi absolute	float	x*0.01933677	0.00
+ext	E36	Target Boost (4-byte)*	5104584007	0xFF6454	4			3	bar relative sea level	float	(x-760)*0.001333224	0.000
+ext	E36	Target Boost (4-byte)*	5104584007	0xFF6454	4			4	bar absolute	float	x*0.001333224	0.000
+ext	E36	Target Boost (4-byte)*	5104584007	0xFF6454	4			5	mmHg absolute	float	x	0
+ext	E37	Turbo Dynamics Proportional (4-byte)*	5104584007	0xFF6458	4			0	absolute %	float	x	0.00
+ext	E38	Throttle Plate Opening Angle (4-byte)*	5104584007	0xFF6B7C	4			0	%	float	x/.84	0.00
+ext	E39	Feedback Knock Correction (4-byte)*	5104584007	0xFF7D4C	4			0	degrees	float	x	0.00
+ext	E40	Knock Correction Advance (IAM only)*	5104584007	0xFF7DB0	4			0	degrees	float	x	0.00
+ext	E41	Fine Learning Knock Correction (4-byte)*	5104584007	0xFF7DD0	4			0	degrees	float	x	0.00
+ext	E43	Knock Correction Advance (4-byte)*	5104584007	0xFF7D48	4			0	degrees	float	x	0.00
+ext	E44	A/F Learning #1 A (Stored)*	5104584007	0xFF24B4	4			0	%	float	x*100	0.00
+ext	E45	A/F Learning #1 B (Stored)*	5104584007	0xFF24BC	4			0	%	float	x*100	0.00
+ext	E46	A/F Learning #1 C (Stored)*	5104584007	0xFF24C4	4			0	%	float	x*100	0.00
+ext	E47	A/F Learning #1 D (Stored)*	5104584007	0xFF24CC	4			0	%	float	x*100	0.00
+ext	E48	A/F Learning #1 (4-byte)*	5104584007	0xFF768C	4			0	%	float	x*100	0.00
+ext	E49	Idle Speed Map Selection*	5104584007	0xFF8408	1			0	raw ecu value		x	0
+ext	E50	Fuel Injector #1 Latency (4-byte)*	5104584007	0xFF7A5C	4			0	ms	float	x*.001	0.0000
+ext	E51	Manifold Absolute Pressure (4-byte)*	5104584007	0xFF6ADC	4			0	kPa absolute	float	x*0.1333224	0.00
+ext	E51	Manifold Absolute Pressure (4-byte)*	5104584007	0xFF6ADC	4			1	psi absolute	float	x*0.01933677	0.00
+ext	E51	Manifold Absolute Pressure (4-byte)*	5104584007	0xFF6ADC	4			2	bar absolute	float	x*0.001333224	0.000
+ext	E51	Manifold Absolute Pressure (4-byte)*	5104584007	0xFF6ADC	4			3	mmHg absolute	float	x	0
+ext	E51	Manifold Absolute Pressure (4-byte)*	5104584007	0xFF6ADC	4			4	inHg absolute	float	x*0.03937	0.00
+ext	E52	Manifold Relative Sea Level Pressure (4-byte)*	5104584007	0xFF6ADC	4			0	psi relative sea level	float	(x-760)*0.01933677	0.00
+ext	E52	Manifold Relative Sea Level Pressure (4-byte)*	5104584007	0xFF6ADC	4			1	bar relative sea level	float	(x-760)*0.001333224	0.000
+ext	E52	Manifold Relative Sea Level Pressure (4-byte)*	5104584007	0xFF6ADC	4			2	mmHg relative sea level	float	(x-760)	0
+ext	E53	Ignition Base Timing*	5104584007	0xFF7B98	4			0	degrees	float	x	0.00
+ext	E54	Tip-in Throttle*	5104584007	0xFF6B8C	4			0	%	float	x	0.000
+ext	E55	Tip-in Enrichment (Last Calculated)*	5104584007	0xFF7924	4			0	raw ecu value	float	x	0
+ext	E56	Requested Torque*	5104584007	0xFF8058	4			0	raw ecu value	float	x	0.00
+ext	E57	Target Throttle Plate Position*	5104584007	0xFF8040	4			0	%	float	x/.84	0.00
+ext	E58	Fine Learning Table Offset*	5104584007	0xFF7DD6	1			0	index position		x+1	0
+ext	E59	Gear (Calculated)*	5104584007	0xFF7079	1			0	position		x	0
+ext	E60	Fuel Injector #1 Pulse Width (4-byte)*	5104584007	0xFF7A48	4			0	ms	float	x*.001	0.0000
+ext	E61	A/F Learning Airflow Range (Current)*	5104584007	0xFF7695	1			0	offset		x+1	0
+ext	E70	Primary Wastegate Duty Maximum* (4-byte)*	5104584007	0xFF6478	4			0	%	float	x	0.000
+ext	E77	Primary Wastegate Duty Maximum* (4-byte)*	5104584007	0xFF6478	4			0	%	float	x	0.000
+ext	E78	Primary Wastegate Duty Maximum* (2-byte)**	5104584007	0xFF708C	2			0	%		x*.00390625	0.00
+ext	E79	Turbo Dynamics Integral (2-byte)**	5104584007	0xFF708E	2			0	absolute %		(x*.00390625)-50	0.00
+ext	E80	Turbo Dynamics Proportional (2-byte)**	5104584007	0xFF7090	2			0	absolute %		(x*.00390625)-50	0.00
+ext	E81	A/F Correction #1 (4-byte)*	5104584007	0xFF73A4	4			0	%	float	(x*100)-100	0.00
+ext	E82	A/F Correction #1 (2-byte)**	5104584007	0xFF7094	2			0	%		(x*.01220703)-100	0.00
+ext	E83	A/F Learning #1 (2-byte)**	5104584007	0xFF7098	2			0	%		(x*.04882812)-50	0.00
+ext	E84	Primary Open Loop Map Enrichment (4-byte)*	5104584007	0xFF7778	4			0	estimated AFR	float	14.7/(1+x)	0.00
+ext	E84	Primary Open Loop Map Enrichment (4-byte)*	5104584007	0xFF7778	4			1	lambda	float	1/(1+x)	0.00
+ext	E84	Primary Open Loop Map Enrichment (4-byte)*	5104584007	0xFF7778	4			2	fuel-air equivalence ratio	float	1+x	0.00
+ext	E85	Primary Open Loop Map Enrichment (2-byte)**	5104584007	0xFF709A	2			0	lambda		1/(1+(x*.00003051758))	0.00
+ext	E85	Primary Open Loop Map Enrichment (2-byte)**	5104584007	0xFF709A	2			1	estimated AFR		14.7/(1+(x*.00003051758))	0.00
+ext	E85	Primary Open Loop Map Enrichment (2-byte)**	5104584007	0xFF709A	2			2	fuel-air equivalence ratio		1+(x*.00003051758)	0.00
+ext	E87	Engine Load (2-byte)**	5104584007	0xFF70A0	2			0	g/rev		x*.00006103516	0.00
+ext	E88	Manifold Absolute Pressure (2-byte)**	5104584007	0xFF70AE	2			0	kPa absolute		x*0.1333224	0.00
+ext	E88	Manifold Absolute Pressure (2-byte)**	5104584007	0xFF70AE	2			1	psi absolute		x*0.01933677	0.00
+ext	E88	Manifold Absolute Pressure (2-byte)**	5104584007	0xFF70AE	2			2	bar absolute		x*0.001333224	0.000
+ext	E88	Manifold Absolute Pressure (2-byte)**	5104584007	0xFF70AE	2			3	mmHg absolute		x	0
+ext	E88	Manifold Absolute Pressure (2-byte)**	5104584007	0xFF70AE	2			4	inHg absolute		x*0.03937	0.00
+ext	E89	Manifold Relative Sea Level Pressure (2-byte)**	5104584007	0xFF70AE	2			0	kPa relative sea level		(x-760)*0.1333224	0.000
+ext	E89	Manifold Relative Sea Level Pressure (2-byte)**	5104584007	0xFF70AE	2			1	psi relative sea level		(x-760)*0.01933677	0.00
+ext	E89	Manifold Relative Sea Level Pressure (2-byte)**	5104584007	0xFF70AE	2			2	bar relative sea level		(x-760)*0.001333224	0.000
+ext	E89	Manifold Relative Sea Level Pressure (2-byte)**	5104584007	0xFF70AE	2			3	mmHg relative sea level		(x-760)	0
+ext	E90	Target Boost (2-byte)**	5104584007	0xFF70B2	2			0	kPa absolute		x*0.1333224	0.00
+ext	E90	Target Boost (2-byte)**	5104584007	0xFF70B2	2			1	psi relative sea level		(x-760)*0.01933677	0.00
+ext	E90	Target Boost (2-byte)**	5104584007	0xFF70B2	2			2	psi absolute		x*0.01933677	0.00
+ext	E90	Target Boost (2-byte)**	5104584007	0xFF70B2	2			3	bar relative sea level		(x-760)*0.001333224	0.000
+ext	E90	Target Boost (2-byte)**	5104584007	0xFF70B2	2			4	bar absolute		x*0.001333224	0.000
+ext	E90	Target Boost (2-byte)**	5104584007	0xFF70B2	2			5	mmHg absolute		x	0
+ext	E91	A/F Sensor #1 (4-byte)*	5104584007	0xFF6DD4	4			0	estimated AFR	float	x*14.7	0.00
+ext	E91	A/F Sensor #1 (4-byte)*	5104584007	0xFF6DD4	4			1	lambda	float	x	0.00
+ext	E91	A/F Sensor #1 (4-byte)*	5104584007	0xFF6DD4	4			2	fuel-air equivalence ratio	float	1/x	0.00
+ext	E92	A/F Sensor #1 (2-byte)**	5104584007	0xFF70B4	2			0	estimated AFR		(x*.0001220703)*14.7	0.00
+ext	E92	A/F Sensor #1 (2-byte)**	5104584007	0xFF70B4	2			1	lambda		x*0.0001220703	0.00
+ext	E92	A/F Sensor #1 (2-byte)**	5104584007	0xFF70B4	2			2	fuel-air equivalence ratio		1/(x*0.0001220703)	0.00
+ext	E93	Throttle Plate Opening Angle (2-byte)**	5104584007	0xFF70BC	2			0	%		x*0.0022706535	0.00
+ext	E94	Feedback Knock Correction (1-byte)**	5104584007	0xFF70C6	1			0	degrees		(x*.3515625)-45	0.00
+ext	E95	Fine Learning Knock Correction (1-byte)**	5104584007	0xFF70C9	1			0	degrees		(x*.3515625)-45	0.00
+ext	E96	IAM (1-byte)**	5104584007	0xFF70CB	1			0	multiplier		x*.0625	0.0000
+ext	E113	Manifold Relative Pressure (4-byte)*	5104584007	0xFF6AE0	4			0	kPa relative	float	x*0.1333224	0.000
+ext	E113	Manifold Relative Pressure (4-byte)*	5104584007	0xFF6AE0	4			1	psi relative	float	x*0.01933677	0.00
+ext	E113	Manifold Relative Pressure (4-byte)*	5104584007	0xFF6AE0	4			2	bar relative	float	x*0.001333224	0.000
+ext	E113	Manifold Relative Pressure (4-byte)*	5104584007	0xFF6AE0	4			3	mmHg relative	float	x	0
+ext	E113	Manifold Relative Pressure (4-byte)*	5104584007	0xFF6AE0	4			4	inHg relative	float	x*0.03937	0.00
+ext	E114	Knock Sum*	5104584007	0xFF7D24	1			0	count		x	0
+ext	E118	Knock Correction Advance Max Primary*	5104584007	0xFF7DA8	4			0	degrees	float	x	0.00
+ext	E120	Target Boost Relative (4-byte)*	5104584007	0xFF649C	4			0	kPa relative	float	x*0.1333224	0.000
+ext	E120	Target Boost Relative (4-byte)*	5104584007	0xFF649C	4			1	psi relative	float	x*0.01933677	0.00
+ext	E120	Target Boost Relative (4-byte)*	5104584007	0xFF649C	4			2	bar relative	float	x*0.001333224	0.000
+ext	E120	Target Boost Relative (4-byte)*	5104584007	0xFF649C	4			3	mmHg relative	float	x	0
+ext	E121	Closed Loop Fueling Target (4-byte)*	5104584007	0xFF73B4	4			0	estimated AFR	float	x*14.7	0.00
+ext	E121	Closed Loop Fueling Target (4-byte)*	5104584007	0xFF73B4	4			1	lambda	float	x	0.00
+ext	E121	Closed Loop Fueling Target (4-byte)*	5104584007	0xFF73B4	4			2	fuel-air equivalence ratio	float	1/x	0.00
+ext	E122	Closed Loop Fueling Target (2-byte)*	5104584007	0xFF70BA	2			0	lambda		x*0.0001220703	0.00
+ext	E122	Closed Loop Fueling Target (2-byte)*	5104584007	0xFF70BA	2			1	estimated AFR		x*.001794433	0.00
+ext	E122	Closed Loop Fueling Target (2-byte)*	5104584007	0xFF70BA	2			2	fuel-air equivalence ratio		1/(x*0.0001220703)	0.00
+ext	E123	Final Fueling Base (4-byte)*	5104584007	0xFF72EC	4			0	lambda	float	1/x	0.00
+ext	E123	Final Fueling Base (4-byte)*	5104584007	0xFF72EC	4			1	estimated AFR	float	14.7/x	0.00
+ext	E123	Final Fueling Base (4-byte)*	5104584007	0xFF72EC	4			2	fuel-air equivalence ratio	float	x	0.00
+ext	E124	Final Fueling Base (2-byte)*	5104584007	0xFF709E	2			0	lambda		1/(x*.0004882812)	0.00
+ext	E124	Final Fueling Base (2-byte)*	5104584007	0xFF709E	2			1	estimated AFR		14.7/(x*.0004882812)	0.00
+ext	E124	Final Fueling Base (2-byte)*	5104584007	0xFF709E	2			2	fuel-air equivalence ratio		x*.0004882812	0.00

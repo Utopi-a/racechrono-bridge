@@ -122,6 +122,19 @@ elapsed_ms,kind,id,data
 
 `kind` is `F` (frame), `M` (marker), or `S` (adapter status). Monitoring uses `ATS0`, `ATH1`, and `ATCAF0`; the adapter stays silent on the bus (ELM327 default `ATCSM1`).
 
+## SSM Parameter Catalog
+
+`app/src/main/assets/ssm_catalog.tsv` is generated from the RomRaider logger definition and is the single source for SSM parameter addresses, storage types, and conversions used by the logger.
+
+```sh
+python3 scripts/generate_ssm_catalog.py --logger-xml <RomRaider logger.xml> --ecu-id 5104584007
+```
+
+- Includes every SSM standard parameter (`P…`) and the extended parameters (`E…`) of the listed ECU IDs. Extended addresses differ per ECU ID.
+- Calculated parameters that depend on others (`P200` and similar) and bit switches are not included.
+- One row per conversion; `conv_index` 0 is RomRaider's default. Column names in recorded CSV files use the RomRaider form `Name (units)` so existing RomRaider log tools can read them.
+- The source definition version is written on the first line of the TSV. The current file comes from version 370 (2021-11-16).
+
 ## RaceChrono Setup
 
 ```text
