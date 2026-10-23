@@ -36,6 +36,7 @@ import com.utopia.racechronobridge.background.BridgeRuntimeStore
 import com.utopia.racechronobridge.background.StepState
 import com.utopia.racechronobridge.background.StepStatus
 import com.utopia.racechronobridge.diagnostics.AppExitDiagnostics
+import com.utopia.racechronobridge.logger.LogPresets
 import com.utopia.racechronobridge.racechrono.RaceChronoTcpServer
 import com.utopia.racechronobridge.racechrono.RaceChronoTcpStatus
 import com.utopia.racechronobridge.ssm2.ChannelMode
@@ -45,6 +46,7 @@ import com.utopia.racechronobridge.ssm2.StandardSsm2Preset
 import com.utopia.racechronobridge.ssm2.SubaruTelemetry
 import com.utopia.racechronobridge.ssm2.TelemetryChannel
 import com.utopia.racechronobridge.ssm2.modeFor
+import java.io.File
 import java.util.Locale
 
 class MainActivity : Activity(), BridgeRuntime.Listener {
@@ -78,6 +80,16 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
     private lateinit var acquisitionLayout: LinearLayout
     private lateinit var logView: TextView
     private var detailsExpanded = false
+    private lateinit var loggerStep: StepRow
+    private lateinit var loggerButton: TextView
+    private lateinit var loggerExportButton: TextView
+    private lateinit var loggerPresetLayout: LinearLayout
+    private lateinit var loggerRomTagInput: EditText
+    private lateinit var loggerValuesLayout: LinearLayout
+    private val loggerValueViews = mutableMapOf<String, TextView>()
+
+    /** 保存先の選択画面から戻ったときに書き出すファイル（CAN 記録・ロガー共通）。 */
+    private var pendingExportFile: File? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -140,6 +152,10 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
         lastTelemetry = state.telemetry
         updateTelemetryValues(state.telemetry)
         renderCapture(state)
+        renderLogger(state)
+        if (previous.loggerPresetKey != state.loggerPresetKey || loggerPresetLayout.childCount == 0) {
+            renderLoggerPreset(state.loggerPresetKey)
+        }
         tcpToggleButton.text = if (state.tcpStatus.running) "TCP サーバーを止める" else "TCP サーバーを開始"
         if (previous.acquisitionMode != state.acquisitionMode || acquisitionLayout.childCount == 0) {
             renderAcquisitionMode(state.acquisitionMode)
@@ -172,8 +188,9 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
     @Deprecated("Used for simple platform document picker integration without extra dependencies.")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == CAN_CAPTURE_EXPORT_REQUEST && resultCode == RESULT_OK) {
-            writeCanCaptureExport(data?.data)
+        if (requestCode == CAN_CAPTURE_EXPORT_REQUEST || requestCode == LOGGER_EXPORT_REQUEST) {
+            if (resultCode == RESULT_OK) writePendingExport(data?.data)
+            pendingExportFile = null
             return
         }
         if (requestCode != CUSTOM_CHANNEL_FILE_REQUEST || resultCode != RESULT_OK) {
@@ -243,6 +260,9 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
         telemetryGrid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(telemetryGrid)
         rebuildTelemetryTiles()
+
+        root.addView(sectionLabel("ロガー"))
+        root.addView(buildLoggerSection())
 
         root.addView(sectionLabel("CAN 記録"))
         root.addView(buildCaptureSection())
@@ -316,7 +336,7 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
                 }
             }
         }
-        exportButton = secondaryButton("CSV を書き出す") { exportCanCapture() }
+        exportButton = secondaryButton("CSV を書き出す") { exportFile(currentRuntimeState.canCaptureFile, CAN_CAPTURE_EXPORT_REQUEST) }
         markerButtons = CAN_CAPTURE_MARKERS.map { marker ->
             secondaryButton(marker.label) {
                 runtime.markCanCapture(marker.key)
@@ -340,6 +360,112 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
                 addView(row(*rowButtons.map { it to 1f }.toTypedArray()), fullWidthParams(top = 6))
             }
         }
+    }
+
+    private fun buildLoggerSection(): View {
+        loggerStep = stepRow("状態")
+        loggerRomTagInput = EditText(this).apply {
+            hint = "ROM の版名（例: mod3、revA）。ファイル名に入ります"
+            setText(currentRuntimeState.loggerRomTag)
+            isSingleLine = true
+            textSize = 14f
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            setTextColor(COLOR_TEXT)
+            setHintTextColor(COLOR_TEXT_MUTED)
+            setPadding(12.dp(), 10.dp(), 12.dp(), 10.dp())
+            background = rounded(COLOR_SURFACE)
+            setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) runtime.setLoggerRomTag(text.toString()) }
+        }
+        loggerButton = primaryButton("記録を開始") {
+            if (currentRuntimeState.logger.state == StepState.WORKING) {
+                runtime.stopLogging()
+            } else {
+                runtime.setLoggerRomTag(loggerRomTagInput.text.toString())
+                ensureBridgePermissions {
+                    startBridgeForegroundService()
+                    runtime.startLogging()
+                }
+            }
+        }
+        loggerExportButton = secondaryButton("CSV を書き出す") { exportFile(currentRuntimeState.loggerFile, LOGGER_EXPORT_REQUEST) }
+        loggerPresetLayout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        loggerValuesLayout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(
+                caption(
+                    "SSM2 を続けて読み、RomRaider と同じ形の CSV に記録します。記録中は通常の取得を止め、" +
+                        "RaceChrono には記録した値を送ります。書き出し先には OneDrive の ECUdata/log も選べます。",
+                ),
+            )
+            addView(sectionHint("セッション"), fullWidthParams(top = 12))
+            addView(loggerPresetLayout, fullWidthParams(top = 6))
+            addView(sectionHint("ROM"), fullWidthParams(top = 12))
+            addView(loggerRomTagInput, fullWidthParams(top = 6))
+            addView(card { addView(loggerStep.view) }, fullWidthParams(top = 10))
+            addView(row(loggerButton to 1f, loggerExportButton to 1f), fullWidthParams(top = 10))
+            addView(loggerValuesLayout, fullWidthParams(top = 10))
+        }
+    }
+
+    private fun renderLoggerPreset(selectedKey: String) {
+        loggerPresetLayout.removeAllViews()
+        loggerPresetLayout.addView(
+            segmentedControl(
+                options = LogPresets.all.map { preset -> preset.key to (preset.key == selectedKey) },
+            ) { index -> runtime.setLoggerPreset(LogPresets.all[index].key) },
+        )
+        val preset = LogPresets.byKey(selectedKey) ?: return
+        loggerPresetLayout.addView(
+            caption("${preset.key} ${preset.title}: ${preset.purpose}\n項目: ${preset.parameters.joinToString(" ") { it.id }}"),
+            fullWidthParams(top = 6),
+        )
+    }
+
+    private fun renderLogger(state: BridgeRuntimeState) {
+        loggerStep.render(state.logger)
+        val recording = state.logger.state == StepState.WORKING
+        loggerButton.text = if (recording) "記録を止める" else "記録を開始"
+        val canStart = recording || (state.adapter.state == StepState.OK && state.capture.state != StepState.WORKING)
+        loggerButton.isEnabled = canStart
+        loggerButton.alpha = if (canStart) 1f else 0.5f
+        val canExport = !recording && state.loggerFile?.isFile == true
+        loggerExportButton.isEnabled = canExport
+        loggerExportButton.alpha = if (canExport) 1f else 0.5f
+
+        val headers = state.loggerValues.map { it.header }
+        if (headers != loggerValueViews.keys.toList()) {
+            loggerValuesLayout.removeAllViews()
+            loggerValueViews.clear()
+            if (headers.isNotEmpty()) {
+                loggerValuesLayout.addView(
+                    card {
+                        state.loggerValues.forEachIndexed { index, item ->
+                            if (index > 0) addView(divider())
+                            val value = TextView(context).apply {
+                                textSize = 15f
+                                typeface = Typeface.MONOSPACE
+                                setTextColor(COLOR_TEXT)
+                                gravity = Gravity.END
+                            }
+                            loggerValueViews[item.header] = value
+                            addView(
+                                row(
+                                    TextView(context).apply {
+                                        text = item.header
+                                        textSize = 12f
+                                        setTextColor(COLOR_TEXT_MUTED)
+                                    } to 2f,
+                                    value to 1f,
+                                ).apply { setPadding(14.dp(), 8.dp(), 14.dp(), 8.dp()) },
+                            )
+                        }
+                    },
+                )
+            }
+        }
+        state.loggerValues.forEach { item -> loggerValueViews[item.header]?.text = item.value }
     }
 
     private fun buildCustomChannelSection(container: LinearLayout) {
@@ -451,6 +577,7 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
             state.scanning -> "探すのをやめる"
             state.adapter.state == StepState.WORKING -> "接続中…"
             state.adapter.state != StepState.OK -> "アダプタを探す"
+            state.logger.state == StepState.WORKING -> "ロガー記録中"
             state.capture.state == StepState.WORKING -> "CAN 記録中"
             state.ecu.state == StepState.OK -> "取得を止める"
             state.ecu.state == StepState.WORKING -> "初期化中…"
@@ -459,7 +586,8 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
         val enabled = state.scanning || (
             state.adapter.state != StepState.WORKING &&
                 state.ecu.state != StepState.WORKING &&
-                state.capture.state != StepState.WORKING
+                state.capture.state != StepState.WORKING &&
+                state.logger.state != StepState.WORKING
             )
         connectionButton.isEnabled = enabled
         connectionButton.alpha = if (enabled) 1f else 0.5f
@@ -839,8 +967,7 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
         }
     }
 
-    private fun exportCanCapture() {
-        val file = currentRuntimeState.canCaptureFile
+    private fun exportFile(file: File?, requestCode: Int) {
         if (file == null || !file.isFile) {
             showUserMessage("まだ記録がありません")
             return
@@ -851,17 +978,19 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
             putExtra(Intent.EXTRA_TITLE, file.name)
         }
         runCatching {
-            startActivityForResult(intent, CAN_CAPTURE_EXPORT_REQUEST)
+            pendingExportFile = file
+            startActivityForResult(intent, requestCode)
         }.onFailure { error ->
-            appendLog("CAN capture export picker failed: ${error.message}")
+            pendingExportFile = null
+            appendLog("Export picker failed: ${error.message}")
             showUserMessage("保存先の選択を開けませんでした")
         }
     }
 
-    private fun writeCanCaptureExport(uri: Uri?) {
-        val file = currentRuntimeState.canCaptureFile
+    private fun writePendingExport(uri: Uri?) {
+        val file = pendingExportFile
         if (uri == null || file == null) {
-            appendLog("CAN capture export returned no destination.")
+            appendLog("Export returned no destination.")
             return
         }
         runCatching {
@@ -869,10 +998,10 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
                 file.inputStream().use { input -> input.copyTo(output) }
             } ?: error("destination stream unavailable")
         }.onSuccess {
-            appendLog("CAN capture exported: ${file.name}")
+            appendLog("Exported: ${file.name}")
             showUserMessage("${file.name} を保存しました")
         }.onFailure { error ->
-            appendLog("CAN capture export failed: ${error.message}")
+            appendLog("Export failed: ${error.message}")
             showUserMessage("CSV の保存に失敗しました")
         }
     }
@@ -1300,6 +1429,7 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
         private const val CUSTOM_CHANNEL_FILE_REQUEST = 1002
         private const val NOTIFICATION_PERMISSION_REQUEST = 1003
         private const val CAN_CAPTURE_EXPORT_REQUEST = 1004
+        private const val LOGGER_EXPORT_REQUEST = 1005
         private const val KEY_CUSTOM_CHANNELS = "custom_channels"
         private const val LOG_LINES_SHOWN = 80
         private const val OFF_LABEL = "オフ"

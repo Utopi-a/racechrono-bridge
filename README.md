@@ -122,6 +122,34 @@ elapsed_ms,kind,id,data
 
 `kind` is `F` (frame), `M` (marker), or `S` (adapter status). Monitoring uses `ATS0`, `ATH1`, and `ATCAF0`; the adapter stays silent on the bus (ELM327 default `ATCSM1`).
 
+## Logger
+
+The `ロガー` section records SSM2 parameters continuously to a RomRaider-style CSV (`Time (msec),<Name> (<units>),...`). The CSV can be read by the RomRaider log tools in the GH8 tuning project without conversion.
+
+1. Connect the adapter as usual.
+2. Pick a session (`A`-`F`) and type the ROM version (for example `mod3` or `revA`). The ROM version goes into the file name.
+3. Tap `記録を開始`. Normal telemetry and CAN capture pause while logging; RaceChrono keeps receiving the logged values (RPM, boost, throttle, and so on).
+4. Tap `記録を止める`, then `CSV を書き出す`. The Android save dialog can save straight to OneDrive (for example `ECUdata/log`).
+
+Sessions follow the GH8 measurement plan:
+
+| Key | Purpose | Parameters |
+|---|---|---|
+| A | Fuel headroom: injector duty and WOT fueling | P8 P12 P21 E87 E124 P25 E93 E92 P11 P2 (+ calculated injector duty and load) |
+| B | Knock: timing and knock corrections | P8 E87 P10 E94 E95 E96 P25 E93 P60 P11 |
+| C | Boost: overshoot, WGDC, turbo dynamics | P8 P25 E90 P36 E78 E79 E80 E93 P11 |
+| D | Cruise: closed-loop correction/learning, MAF check | P8 P9 E87 P18 E82 E83 E61 E33 P10 P2 |
+| E | Circuit: heat build-up over laps | P8 P11 P2 P25 P10 E94 E95 E96 E93 P36 |
+| F | Shift points: RPM, speed, throttle only | P8 P9 E93 P11 |
+
+How reading works:
+
+- The ECU ID is read with `AA` at the start; extended (`E…`) addresses come from the catalog for that ECU ID. If identification fails, `5104584007` (GH8 A2TB100U) is used.
+- Extended parameters live in ECU RAM. Nearby RAM addresses are read together with one `A0` block read; GH8's 1-2 byte extended parameters sit in `0xFF708C`-`0xFF70CB`, so most sessions need one block request. Standard parameters are read one byte at a time with `A8` (ELM327 can only send single-frame requests).
+- If the ECU or adapter rejects a block read, that block switches to `A8` reads for the rest of the session and the debug log says so. Block reads over CAN through the iCar Pro 2S still need to be confirmed on the car.
+- Coolant and intake temperature are read every 10 samples.
+- Logging stops by itself after 10 consecutive failed samples.
+
 ## SSM Parameter Catalog
 
 `app/src/main/assets/ssm_catalog.tsv` is generated from the RomRaider logger definition and is the single source for SSM parameter addresses, storage types, and conversions used by the logger.

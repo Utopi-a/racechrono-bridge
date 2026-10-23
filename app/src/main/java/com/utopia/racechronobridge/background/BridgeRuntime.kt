@@ -17,6 +17,14 @@ import com.utopia.racechronobridge.canlog.CanCaptureSession
 import com.utopia.racechronobridge.canlog.CanCaptureWriter
 import com.utopia.racechronobridge.elm.Elm327Session
 import com.utopia.racechronobridge.elm.Elm327Transport
+import com.utopia.racechronobridge.logger.LogLayout
+import com.utopia.racechronobridge.logger.LogPreset
+import com.utopia.racechronobridge.logger.LogPresets
+import com.utopia.racechronobridge.logger.LogRecord
+import com.utopia.racechronobridge.logger.LoggerSession
+import com.utopia.racechronobridge.logger.LoggerStats
+import com.utopia.racechronobridge.logger.RomRaiderCsvWriter
+import com.utopia.racechronobridge.logger.updatedWith
 import com.utopia.racechronobridge.logging.DebugLog
 import com.utopia.racechronobridge.racechrono.RaceChronoTcpServer
 import com.utopia.racechronobridge.racechrono.RaceChronoTcpStatus
@@ -24,9 +32,11 @@ import com.utopia.racechronobridge.racechrono.Rc3Sentence
 import com.utopia.racechronobridge.ssm2.ChannelMode
 import com.utopia.racechronobridge.ssm2.CustomTelemetryChannel
 import com.utopia.racechronobridge.ssm2.FakeSubaruTelemetrySource
+import com.utopia.racechronobridge.ssm2.Ssm2Client
 import com.utopia.racechronobridge.ssm2.Ssm2Reader
 import com.utopia.racechronobridge.ssm2.SubaruTelemetry
 import com.utopia.racechronobridge.ssm2.TelemetryChannel
+import com.utopia.racechronobridge.ssm2.catalog.SsmCatalog
 import java.io.File
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
@@ -46,6 +56,12 @@ data class StepStatus(
     val detail: String,
 )
 
+/** ロガー画面に出す 1 列分の最新値。 */
+data class LoggerValue(
+    val header: String,
+    val value: String,
+)
+
 data class BridgeRuntimeState(
     val tcpStatus: RaceChronoTcpStatus = RaceChronoTcpStatus(running = false, clientConnected = false),
     val adapter: StepStatus = StepStatus(StepState.IDLE, "未接続"),
@@ -57,6 +73,11 @@ data class BridgeRuntimeState(
     val capture: StepStatus = StepStatus(StepState.IDLE, "停止中"),
     val canCaptureFile: File? = null,
     val acquisitionMode: AcquisitionMode = AcquisitionMode.CAN,
+    val logger: StepStatus = StepStatus(StepState.IDLE, "停止中"),
+    val loggerFile: File? = null,
+    val loggerPresetKey: String = LogPresets.FUEL.key,
+    val loggerRomTag: String = "",
+    val loggerValues: List<LoggerValue> = emptyList(),
 )
 
 class BridgeRuntime(
@@ -108,6 +129,14 @@ class BridgeRuntime(
     @Volatile
     private var lastTelemetry: SubaruTelemetry = SubaruTelemetry.EMPTY
 
+    @Volatile
+    private var loggerSession: LoggerSession? = null
+
+    /** RomRaider ロガー定義から作った SSM パラメータ表（assets）。最初に記録を始めたときに読む。 */
+    private val catalog: SsmCatalog by lazy {
+        appContext.assets.open(CATALOG_ASSET).bufferedReader().useLines { SsmCatalog.parse(it) }
+    }
+
     private var rc3Count = 0
     private var autoConnectAttempted = false
 
@@ -117,6 +146,11 @@ class BridgeRuntime(
         if (savedMode != null) {
             state = state.copy(acquisitionMode = savedMode)
         }
+        val savedPreset = preferences().getString(KEY_LOGGER_PRESET, null)?.takeIf { LogPresets.byKey(it) != null }
+        state = state.copy(
+            loggerPresetKey = savedPreset ?: state.loggerPresetKey,
+            loggerRomTag = preferences().getString(KEY_LOGGER_ROM_TAG, "").orEmpty(),
+        )
     }
 
     fun addListener(listener: Listener) {
@@ -177,6 +211,7 @@ class BridgeRuntime(
 
     fun connectBleDevice(scanDevice: BleScanDevice) {
         stopBleScan()
+        stopLogging()
         stopCanCapture()
         stopTelemetry()
         updateState { copy(adapter = StepStatus(StepState.WORKING, "${scanDevice.name} に接続中")) }
@@ -243,6 +278,10 @@ class BridgeRuntime(
             appendLog("CAN capture is already running.")
             return
         }
+        if (isLogging()) {
+            appendLog("Stop logging before starting CAN capture.")
+            return
+        }
 
         // ATMA and SSM2 polling share one adapter, so polling pauses during capture.
         stopTelemetry()
@@ -293,6 +332,100 @@ class BridgeRuntime(
         canCaptureSession?.requestStop()
     }
 
+    fun setLoggerPreset(key: String) {
+        if (LogPresets.byKey(key) == null || state.loggerPresetKey == key) return
+        preferences().edit().putString(KEY_LOGGER_PRESET, key).apply()
+        updateState { copy(loggerPresetKey = key) }
+    }
+
+    /** ファイル名に入れる ROM の版名（例: mod3、revA）。どの ROM で取ったログかを後から区別するため。 */
+    fun setLoggerRomTag(tag: String) {
+        val cleaned = tag.trim()
+        if (state.loggerRomTag == cleaned) return
+        preferences().edit().putString(KEY_LOGGER_ROM_TAG, cleaned).apply()
+        updateState { copy(loggerRomTag = cleaned) }
+    }
+
+    /**
+     * 選んだプリセットで SSM2 を連続で読み、RomRaider 形式の CSV に記録する。
+     * 記録中は通常の取得と CAN 記録を止め、RaceChrono には記録した値を送り続ける。止めたら通常の取得に戻す。
+     */
+    fun startLogging() {
+        val transport = elmTransport
+        val session = elmSession
+        if (transport == null || session == null) {
+            appendLog("Connect the adapter and initialize ELM327 before logging.")
+            return
+        }
+        if (isLogging()) {
+            appendLog("Logger is already running.")
+            return
+        }
+        if (canCaptureSession != null) {
+            appendLog("Stop CAN capture before logging.")
+            return
+        }
+        val preset = LogPresets.byKey(state.loggerPresetKey) ?: LogPresets.FUEL
+        val romTag = state.loggerRomTag
+        stopTelemetry()
+        updateState {
+            copy(
+                logger = StepStatus(StepState.WORKING, "準備中"),
+                loggerValues = emptyList(),
+                ecu = StepStatus(StepState.IDLE, "記録中は通常の取得を止めています"),
+            )
+        }
+        pollExecutor.execute {
+            var writer: RomRaiderCsvWriter? = null
+            try {
+                // CAN 受信モードの後はヘッダー表示・自動整形が切り替わっているので、SSM2 用に戻す
+                session.configure(SSM2_COMMANDS)
+                val client = Ssm2Client(transport)
+                val ecuId = runCatching { client.identify().ecuId }.getOrElse { error ->
+                    appendLog("ECU identification failed (${error.message}); using $DEFAULT_ECU_ID.")
+                    DEFAULT_ECU_ID
+                }
+                if (ecuId !in catalog.ecuIds()) {
+                    appendLog("ECU ID $ecuId has no extended parameters in the catalog; only standard parameters are logged.")
+                }
+                val layout = LogLayout.resolve(preset, catalog.forEcu(ecuId))
+                if (layout.missing.isNotEmpty()) {
+                    appendLog("Not available for ECU $ecuId: ${layout.missing.joinToString()}")
+                }
+                val file = newLoggerFile(preset, romTag)
+                writer = RomRaiderCsvWriter(file.bufferedWriter(), layout)
+                val logger = LoggerSession(
+                    client = client,
+                    layout = layout,
+                    writer = writer,
+                    onRecord = { record, stats -> onLoggerRecord(layout, record, stats) },
+                    onLog = ::appendLog,
+                )
+                loggerSession = logger
+                appendLog("Logging ECU $ecuId preset ${preset.key} to ${file.absolutePath}")
+                updateState { copy(logger = StepStatus(StepState.WORKING, "記録中"), loggerFile = file) }
+                logger.run()
+                updateState { copy(logger = StepStatus(StepState.OK, "保存済み ${file.name}")) }
+            } catch (error: Exception) {
+                updateState { copy(logger = StepStatus(StepState.FAILED, "失敗: ${error.message}")) }
+                appendLog("Logging failed: ${error.message}")
+            } finally {
+                writer?.close()
+                loggerSession = null
+            }
+            if (elmTransport === transport) {
+                appendLog("Restoring telemetry after logging.")
+                initializeElm327(startPollingOnSuccess = true)
+            }
+        }
+    }
+
+    fun stopLogging() {
+        loggerSession?.requestStop()
+    }
+
+    private fun isLogging(): Boolean = loggerSession != null || state.logger.state == StepState.WORKING
+
     fun markCanCapture(label: String) {
         val writer = canCaptureWriter
         if (writer == null) {
@@ -306,6 +439,10 @@ class BridgeRuntime(
     fun startFakeTelemetry() {
         if (fakePollingTask != null) {
             appendLog("Fake telemetry is already running.")
+            return
+        }
+        if (isLogging()) {
+            appendLog("Stop logging before starting fake telemetry.")
             return
         }
 
@@ -347,6 +484,11 @@ class BridgeRuntime(
         }
         if (realPollingTask != null || canTelemetrySession != null) {
             appendLog("Telemetry is already running.")
+            return
+        }
+        if (isLogging()) {
+            // 記録はアダプターを専有する。記録が終われば通常の取得は自動で戻る
+            appendLog("Telemetry stays paused while logging.")
             return
         }
 
@@ -420,6 +562,7 @@ class BridgeRuntime(
     }
 
     fun shutdown() {
+        stopLogging()
         stopCanCapture()
         stopTelemetry()
         stopBleScan()
@@ -486,6 +629,24 @@ class BridgeRuntime(
         directory.mkdirs()
         val timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"))
         return File(directory, "can-$timestamp.csv")
+    }
+
+    private fun newLoggerFile(preset: LogPreset, romTag: String): File {
+        val directory = appContext.getExternalFilesDir(LOGGER_DIRECTORY) ?: File(appContext.filesDir, LOGGER_DIRECTORY)
+        directory.mkdirs()
+        val timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"))
+        val tag = romTag.replace(Regex("[^A-Za-z0-9_-]"), "").ifBlank { "rom" }
+        return File(directory, "romraiderlog_${timestamp}_${preset.key}_$tag.csv")
+    }
+
+    private fun onLoggerRecord(layout: LogLayout, record: LogRecord, stats: LoggerStats) {
+        publishTelemetry(lastTelemetry.updatedWith(record, System.currentTimeMillis()))
+        val values = layout.columns.map { c ->
+            LoggerValue(c.header, record.values[c.id]?.let(c.conversion::formatValue) ?: "-")
+        } + layout.derived.map { d -> LoggerValue(d.header, record.derived[d]?.let(d::format) ?: "-") }
+        val detail = "記録中  ${"%,d".format(stats.samples)} 件 / ${"%.1f".format(stats.samplesPerSecond)} 回/秒 / " +
+            "要求 ${stats.requestsPerSample} 回" + if (stats.failures > 0) " / 失敗 ${stats.failures}" else ""
+        updateState { copy(logger = StepStatus(StepState.WORKING, detail), loggerValues = values) }
     }
 
     private fun CanCaptureProgress.summary(): String =
@@ -574,5 +735,13 @@ class BridgeRuntime(
         private const val KEY_LAST_DEVICE_NAME = "last_device_name"
         private const val CAN_CAPTURE_DIRECTORY = "can-captures"
         private const val KEY_ACQUISITION_MODE = "acquisition_mode"
+        private const val KEY_LOGGER_PRESET = "logger_preset"
+        private const val KEY_LOGGER_ROM_TAG = "logger_rom_tag"
+        private const val LOGGER_DIRECTORY = "logs"
+        private const val CATALOG_ASSET = "ssm_catalog.tsv"
+
+        /** ECU 識別に失敗したときに使う ECU ID（GH8 の A2TB100U）。 */
+        private const val DEFAULT_ECU_ID = "5104584007"
+        private val SSM2_COMMANDS = listOf("ATH0", "ATCAF1", "ATSH7E0")
     }
 }
