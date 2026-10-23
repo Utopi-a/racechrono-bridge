@@ -52,3 +52,47 @@ class ElmResponseParserTest {
         assertEquals("?", error.reason)
     }
 }
+
+class ElmMultiFrameResponseTest {
+    private val parser = ElmResponseParser()
+
+    @Test
+    fun assemblesMultiFrameBlockReadWithoutSpaces() {
+        // ATS0 / ATCAF1: 1 行目がバイト数（0x0A = 10）、続いて行番号付きの行
+        val raw = "00A\r0:E0010203040506\r1:070809AAAAAAAA\r\r>"
+        val data = assertIs<ElmSsm2Response.Data>(
+            parser.parseSsm2Response(raw = raw, echoCommand = "A000FF708C08", marker = ElmResponseParser.SSM2_BLOCK_READ_MARKER),
+        )
+        assertEquals((1..9).toList(), data.dataBytes)
+    }
+
+    @Test
+    fun assemblesMultiFrameWithSpacesAndWrappedLineNumbers() {
+        val lines = listOf("021") + (0 until 5).map { i -> "${"%X".format(i)}: " + List(7) { "%02X".format(i * 7 + it) }.joinToString(" ") }
+        val raw = lines.joinToString("\r") + "\r>"
+        val data = assertIs<ElmSsm2Response.Data>(
+            parser.parseSsm2Response(raw = raw, echoCommand = null, marker = 0x00),
+        )
+        // 33 バイト中、先頭の 0x00 を応答コードとして扱うので残り 32 バイト
+        assertEquals((1 until 33).toList(), data.dataBytes)
+    }
+
+    @Test
+    fun treats7FAsRejectionEvenWithLengthPrefix() {
+        val response = parser.parseSsm2Response(raw = "03 7F A0 12\r>", echoCommand = null, marker = ElmResponseParser.SSM2_BLOCK_READ_MARKER)
+        val error = assertIs<ElmSsm2Response.Error>(response)
+        assertEquals(true, "rejected" in error.reason)
+    }
+
+    @Test
+    fun keepsDataByte7FAfterAddressReadMarker() {
+        val data = assertIs<ElmSsm2Response.Data>(parser.parseSsm2Data("02 E8 7F>"))
+        assertEquals(listOf(0x7F), data.dataBytes)
+    }
+
+    @Test
+    fun reportsBufferFull() {
+        val error = assertIs<ElmSsm2Response.Error>(parser.parseSsm2Data("E8 01\rBUFFER FULL\r>"))
+        assertEquals("BUFFER FULL", error.reason)
+    }
+}
