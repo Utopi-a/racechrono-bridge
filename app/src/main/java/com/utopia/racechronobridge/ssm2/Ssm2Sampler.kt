@@ -62,6 +62,9 @@ data class Ssm2Sample(
  * - それ以外の失敗（NO DATA・タイムアウトなど）は一時的なこともあるので、[BLOCK_FAILURES_BEFORE_FALLBACK] 回続いたときだけ切り替える。
  *   それまでは例外をそのまま投げ、呼び出し側で通信を立て直してから読み直してもらう
  * 切り替えはこのインスタンスが続く間は保たれる。
+ *
+ * A8 でも拒否されたアドレスは、その ECU では読めないものとして以後読まない（[unreadable]）。
+ * 例外にすると記録全体が止まるので、その列だけ空欄にして他の列の記録を続ける。
  */
 class Ssm2Sampler(
     private val client: Ssm2Client,
@@ -72,6 +75,10 @@ class Ssm2Sampler(
     private val wanted = addresses.toSet()
     private val addressOnly = mutableSetOf<Int>()
     private val blockFailures = mutableMapOf<Int, Int>()
+    private val rejected = mutableSetOf<Int>()
+
+    /** ECU に読み出しを拒否されたアドレス。 */
+    val unreadable: Set<Int> get() = rejected
     var plan: List<Ssm2Read> = Ssm2ReadPlanner.plan(wanted)
         private set
 
@@ -84,7 +91,13 @@ class Ssm2Sampler(
             when (val read = queue.removeFirst()) {
                 is Ssm2Read.Address -> {
                     requests++
-                    bytes[read.address] = client.readAddress(read.address)
+                    try {
+                        bytes[read.address] = client.readAddress(read.address)
+                    } catch (error: Ssm2RequestRejected) {
+                        rejected += read.address
+                        plan = Ssm2ReadPlanner.plan(wanted - rejected, addressOnly)
+                        onLog("ECU rejected reading 0x${read.address.toString(16).uppercase()} (${error.message}); not reading it again in this session.")
+                    }
                 }
                 is Ssm2Read.Block -> {
                     requests++
@@ -96,9 +109,9 @@ class Ssm2Sampler(
                         val failures = (blockFailures[read.start] ?: 0) + 1
                         blockFailures[read.start] = failures
                         if (error !is Ssm2RequestRejected && failures < BLOCK_FAILURES_BEFORE_FALLBACK) throw error
-                        val fallback = read.addresses.filter { it in wanted }
+                        val fallback = read.addresses.filter { it in wanted && it !in rejected }
                         addressOnly += fallback
-                        plan = Ssm2ReadPlanner.plan(wanted, addressOnly)
+                        plan = Ssm2ReadPlanner.plan(wanted - rejected, addressOnly)
                         onLog("Block read 0x${read.start.toString(16).uppercase()}+${read.count} failed $failures time(s) (${error.message}); using A8 for ${fallback.size} addresses.")
                         fallback.forEach { queue.addFirst(Ssm2Read.Address(it)) }
                     }
