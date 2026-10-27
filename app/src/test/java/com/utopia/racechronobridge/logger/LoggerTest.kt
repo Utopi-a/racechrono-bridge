@@ -62,6 +62,19 @@ class LogPresetsTest {
     }
 
     @Test
+    fun withoutRamAccessExtendedParametersAreReplacedByStandardOnes() {
+        val fuel = LogLayout.resolve(LogPresets.FUEL, GH8, ramReadable = false)
+        assertEquals(mapOf("E88" to "P7"), fuel.substituted)
+        assertEquals(listOf("E87", "E124", "E92"), fuel.missing)
+        assertTrue(fuel.columns.none { it.parameter.kind == com.utopia.racechronobridge.ssm2.catalog.SsmParameterKind.EXTENDED })
+        assertEquals(listOf(DerivedColumn.INJECTOR_DUTY, DerivedColumn.MANIFOLD_RELATIVE, DerivedColumn.ENGINE_LOAD), fuel.derived)
+
+        val knock = LogLayout.resolve(LogPresets.KNOCK, GH8, ramReadable = false)
+        assertEquals(mapOf("E94" to "P23", "E95" to "P91", "E96" to "P90", "E88" to "P7"), knock.substituted)
+        assertEquals(listOf("E87"), knock.missing)
+    }
+
+    @Test
     fun unknownUnitsAreRejected() {
         val preset = LogPreset("X", "x", "x", listOf(LogParameterRef("P8", units = "furlongs")))
         assertFailsWith<IllegalArgumentException> { LogLayout.resolve(preset, GH8) }
@@ -78,6 +91,11 @@ class DerivedColumnTest {
     fun boostFromMapIsNotCappedAt127Kpa() {
         // 1.2 bar の跳ね: MAP 222 kPa 絶対、大気圧 101 kPa
         assertEquals(121.0, DerivedColumn.MANIFOLD_RELATIVE.compute(mapOf("E88" to 222.0, "P24" to 101.0))!!, 1e-9)
+    }
+
+    @Test
+    fun boostFallsBackToStandardMapP7() {
+        assertEquals(120.0, DerivedColumn.MANIFOLD_RELATIVE.compute(mapOf("P7" to 221.0, "P24" to 101.0))!!, 1e-9)
     }
 
     @Test
@@ -191,6 +209,26 @@ class LoggerSessionTest {
     }
 
     @Test
+    fun keepsRecordingStandardColumnsWhenTheEcuRejectsRamReads() {
+        val transport = ScriptedElmTransport(FakeEcu(memory, acceptRamReads = false)::respond)
+        val layout = LogLayout.resolve(LogPresets.FUEL, GH8)
+        val out = StringWriter()
+        val records = mutableListOf<LogRecord>()
+        lateinit var session: LoggerSession
+        session = LoggerSession(
+            client = Ssm2Client(transport),
+            layout = layout,
+            writer = RomRaiderCsvWriter(out, layout),
+            onRecord = { r, _, _ -> records += r; if (records.size == 3) session.requestStop() },
+        )
+        session.run()
+        assertEquals(3, records.size)
+        assertEquals(6534.0, records.last().values.getValue("P8"))
+        assertTrue("E87" !in records.last().values)
+        assertEquals(4, out.toString().trimEnd().lines().size)
+    }
+
+    @Test
     fun stopsAfterRepeatedFailures() {
         val layout = LogLayout.resolve(LogPresets.SHIFT, GH8)
         val session = LoggerSession(
@@ -235,6 +273,13 @@ class AlarmMonitorTest {
         repeat(3) { assertEquals(emptyList(), m.evaluate(record(it * 100L, "P13" to 100.0, "P25" to 100.0, "E92" to 11.15))) }
         // 巡航（閉ループ）は 14.7 前後が正常
         repeat(3) { assertEquals(emptyList(), m.evaluate(record(1000 + it * 100L, "P13" to 20.0, "P25" to -30.0, "E92" to 14.7))) }
+    }
+
+    @Test
+    fun leanAfrFallsBackToStandardSensorP58() {
+        val m = AlarmMonitor()
+        m.evaluate(record(0, "P13" to 100.0, "P25" to 100.0, "P58" to 11.5))
+        assertEquals(listOf(AlarmKind.LEAN_AFR), m.evaluate(record(100, "P13" to 100.0, "P25" to 100.0, "P58" to 11.5)).map { it.kind })
     }
 
     @Test

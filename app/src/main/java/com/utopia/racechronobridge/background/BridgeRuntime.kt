@@ -37,10 +37,13 @@ import com.utopia.racechronobridge.ssm2.CustomTelemetryChannel
 import com.utopia.racechronobridge.ssm2.FakeSubaruTelemetrySource
 import com.utopia.racechronobridge.ssm2.Ssm2Client
 import com.utopia.racechronobridge.ssm2.Ssm2Identification
+import com.utopia.racechronobridge.ssm2.Ssm2RequestRejected
 import com.utopia.racechronobridge.ssm2.Ssm2Reader
 import com.utopia.racechronobridge.ssm2.SubaruTelemetry
 import com.utopia.racechronobridge.ssm2.TelemetryChannel
 import com.utopia.racechronobridge.ssm2.catalog.SsmCatalog
+import com.utopia.racechronobridge.ssm2.catalog.SsmParameter
+import com.utopia.racechronobridge.ssm2.catalog.SsmParameterKind
 import java.io.File
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
@@ -419,10 +422,19 @@ class BridgeRuntime(
                 val unsupported = identification?.let { id ->
                     available.values.filter { p -> p.capability?.isSupportedBy(id.bytes) == false }.map { it.id }.toSet()
                 }.orEmpty()
-                val layout = LogLayout.resolve(preset, available - unsupported)
+                val readable = available - unsupported
+                val ramReadable = probeRamReadable(client, preset, readable)
+                if (stop.get()) throw LoggingCancelled()
+                val layout = LogLayout.resolve(preset, readable, ramReadable)
+                if (!ramReadable) {
+                    appendLog("ECU rejects RAM reads over this link; extended parameters replaced: " +
+                        layout.substituted.entries.joinToString { "${it.key}->${it.value}" })
+                }
                 val notSupported = layout.missing.filter { it in unsupported }
-                val notInCatalog = layout.missing.filterNot { it in unsupported }
+                val notReadable = if (ramReadable) emptyList() else layout.missing.filter { readable[it]?.kind == SsmParameterKind.EXTENDED }
+                val notInCatalog = layout.missing - notSupported.toSet() - notReadable.toSet()
                 if (notSupported.isNotEmpty()) appendLog("Not supported by ECU $ecuId: ${notSupported.joinToString()}")
+                if (notReadable.isNotEmpty()) appendLog("Not readable without RAM access (no standard substitute): ${notReadable.joinToString()}")
                 if (notInCatalog.isNotEmpty()) appendLog("Not in catalog for ECU $ecuId: ${notInCatalog.joinToString()}")
                 val file = newLoggerFile(preset, romTag, ecuVerified = identification != null)
                 writer = RomRaiderCsvWriter(file.bufferedWriter(), layout)
@@ -433,7 +445,9 @@ class BridgeRuntime(
                     clock = SystemClock::elapsedRealtime,
                     // 鳴らすかどうかに関係なく判定して CSV に残す（後から見返せるように）
                     alarms = AlarmMonitor(),
-                    onRecord = { record, stats, alarms -> onLoggerRecord(layout, record, stats, alarms, ecuVerified = identification != null) },
+                    onRecord = { record, stats, alarms ->
+                        onLoggerRecord(layout, record, stats, alarms, ecuVerified = identification != null, ramReadable = ramReadable)
+                    },
                     onLog = ::appendLog,
                 )
                 loggerSession = logger
@@ -457,6 +471,27 @@ class BridgeRuntime(
                 appendLog("Restoring telemetry after logging.")
                 initializeElm327(startPollingOnSuccess = true)
             }
+        }
+    }
+
+    /**
+     * ECU がこの通信経路で RAM（拡張パラメータ）の読み出しを受け付けるかを、プリセットの拡張パラメータを 1 バイト読んで確かめる。
+     * 拒否（7F）されたときだけ false。それ以外の失敗は判断材料にならないので、通信を立て直して true とみなす
+     * （読めなければ記録中にその列だけ外れる）。
+     */
+    private fun probeRamReadable(client: Ssm2Client, preset: LogPreset, parameters: Map<String, SsmParameter>): Boolean {
+        val probe = preset.parameters.firstNotNullOfOrNull { ref -> parameters[ref.id]?.takeIf { it.kind == SsmParameterKind.EXTENDED } }
+            ?: return true
+        return try {
+            client.readAddress(probe.byteAddresses.first())
+            true
+        } catch (rejected: Ssm2RequestRejected) {
+            appendLog("RAM read probe ${probe.id} rejected: ${rejected.message}")
+            false
+        } catch (error: Exception) {
+            appendLog("RAM read probe ${probe.id} failed: ${error.message}")
+            runCatching { client.resynchronize() }
+            true
         }
     }
 
@@ -700,7 +735,14 @@ class BridgeRuntime(
         return File(directory, "romraiderlog_${timestamp}_${preset.key}_$tag$suffix.csv")
     }
 
-    private fun onLoggerRecord(layout: LogLayout, record: LogRecord, stats: LoggerStats, alarms: List<AlarmEvent>, ecuVerified: Boolean) {
+    private fun onLoggerRecord(
+        layout: LogLayout,
+        record: LogRecord,
+        stats: LoggerStats,
+        alarms: List<AlarmEvent>,
+        ecuVerified: Boolean,
+        ramReadable: Boolean,
+    ) {
         publishTelemetry(lastTelemetry.updatedWith(record, System.currentTimeMillis()))
         alarms.forEach { alarm ->
             appendLog("ALARM ${alarm.kind.name} at ${alarm.elapsedMillis} ms: ${alarm.message}")
@@ -712,7 +754,8 @@ class BridgeRuntime(
         } + layout.derived.map { d -> LoggerValue(d.header, record.derived[d]?.let(d::format) ?: "-") }
         val detail = "記録中  ${"%,d".format(stats.samples)} 件 / ${"%.1f".format(stats.samplesPerSecond)} 回/秒 / " +
             "要求 ${stats.requestsPerSample} 回" + (if (stats.failures > 0) " / 失敗 ${stats.failures}" else "") +
-            (if (stats.degraded) " / ブロック読み出し停止中" else "") + (if (!ecuVerified) " / ECU 未確認" else "")
+            (if (stats.degraded) " / ブロック読み出し停止中" else "") + (if (!ecuVerified) " / ECU 未確認" else "") +
+            (if (!ramReadable) " / 拡張パラメータ不可（標準で代用）" else "")
         updateState { copy(logger = StepStatus(StepState.WORKING, detail), loggerValues = values) }
     }
 

@@ -21,8 +21,15 @@ class ScriptedElmTransport(private val respond: (String) -> String) : Elm327Tran
 }
 
 /** ECU の RAM を模した応答を作る。A8 は 1 バイト、A0 は複数フレームで返す。 */
-class FakeEcu(private val memory: Map<Int, Int>, private val acceptBlockReads: Boolean = true) {
+class FakeEcu(
+    private val memory: Map<Int, Int>,
+    private val acceptBlockReads: Boolean = true,
+    /** false なら RAM（0xFF0000 以上）の読み出しを拒否する。2026-10 に実車（GH8・iCar Pro 2S・CAN）で見えた応答と同じ `7F A8 12`。 */
+    private val acceptRamReads: Boolean = true,
+) {
     fun respond(command: String): String = when {
+        command.startsWith("A800") && !acceptRamReads && command.substring(4).toInt(16) >= 0xFF0000 -> "7F A8 12\r>"
+        command.startsWith("A000") && !acceptRamReads && command.substring(4, 10).toInt(16) >= 0xFF0000 -> "7F A0 12\r>"
         command.startsWith("A800") -> {
             val address = command.substring(4).toInt(16)
             "02 E8 %02X\r>".format(memory[address] ?: 0)
@@ -179,6 +186,20 @@ class Ssm2SamplerTest {
         assertEquals(0, transport.sent.count { it.startsWith("A0") })
         assertEquals(wanted.size, second.requests)
         assertEquals(true, sampler.degraded)
+    }
+
+    @Test
+    fun addressesTheEcuRejectsAreDroppedInsteadOfFailingTheSample() {
+        val transport = ScriptedElmTransport(FakeEcu(memory, acceptRamReads = false)::respond)
+        val logs = mutableListOf<String>()
+        val sampler = Ssm2Sampler(Ssm2Client(transport), wanted, onLog = { logs += it })
+        val first = sampler.sample()
+        // 標準パラメータ（RPM の 2 バイト）だけは読めている
+        assertEquals(mapOf(0x0E to memory.getValue(0x0E), 0x0F to memory.getValue(0x0F)), first.bytes)
+        assertEquals(wanted.filter { it >= 0xFF0000 }.toSet(), sampler.unreadable)
+        transport.sent.clear()
+        sampler.sample()
+        assertEquals(listOf("A80000000E", "A80000000F"), transport.sent)
     }
 
     @Test

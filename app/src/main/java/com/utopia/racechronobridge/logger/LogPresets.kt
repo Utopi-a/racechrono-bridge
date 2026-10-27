@@ -3,11 +3,13 @@ package com.utopia.racechronobridge.logger
 /**
  * 記録する SSM パラメータ。[units] を指定すると RomRaider の既定以外の換算で記録する。
  * [slow] は温度など変化の遅い項目で、[LoggerSession.SLOW_EVERY] 回に 1 回だけ読む。
+ * [fallback] は、ECU が RAM（拡張パラメータ）の読み出しを受け付けないときに代わりに読む標準パラメータ。
  */
 data class LogParameterRef(
     val id: String,
     val units: String? = null,
     val slow: Boolean = false,
+    val fallback: LogParameterRef? = null,
 )
 
 data class LogPreset(
@@ -37,12 +39,14 @@ object LogPresets {
      * 過給は E88（MAP 絶対圧、ブロック内）から大気圧 P24 を引いて求める（[DerivedColumn.MANIFOLD_RELATIVE]）。
      * P25 は 1 バイトで +127 kPa で頭打ちになり、1.2 bar 前後の跳ねを測れないため使わない。
      */
-    private val map = LogParameterRef("E88")
+    private val map = LogParameterRef("E88", fallback = LogParameterRef("P7"))
     private val load = LogParameterRef("E87")
     private val timing = LogParameterRef("P10")
-    private val fbkc = LogParameterRef("E94")
-    private val flkc = LogParameterRef("E95")
-    private val iam = LogParameterRef("E96")
+
+    /** FBKC は標準パラメータに無い。読めないときは、点火時期（P10）とノック補正の合計（P23）で代わりに見る。 */
+    private val fbkc = LogParameterRef("E94", fallback = LogParameterRef("P23"))
+    private val flkc = LogParameterRef("E95", fallback = LogParameterRef("P91"))
+    private val iam = LogParameterRef("E96", fallback = LogParameterRef("P90"))
 
     val FUEL = LogPreset(
         key = "A",
@@ -77,7 +81,8 @@ object LogPresets {
         title = "巡航",
         purpose = "閉ループの燃料補正と学習（MAF のずれ）、巡航時の点火",
         parameters = listOf(
-            rpm, LogParameterRef("P9"), load, LogParameterRef("P18"), LogParameterRef("E82"), LogParameterRef("E83"),
+            rpm, LogParameterRef("P9"), load, LogParameterRef("P18"),
+            LogParameterRef("E82", fallback = LogParameterRef("P3")), LogParameterRef("E83", fallback = LogParameterRef("P4")),
             LogParameterRef("E61"), LogParameterRef("E33"), timing, coolant,
         ),
     )

@@ -50,7 +50,8 @@ class AlarmMonitor(
         // 全開の判定は P13（E93 は全開で 100% を示す保証がない）。過給は頭打ちのない計算列（E88 − P24）を優先する
         val throttle = v["P13"] ?: v["E93"]
         val boost = record.derived[DerivedColumn.MANIFOLD_RELATIVE] ?: v["P25"]
-        val afr = v["E92"]
+        // E92（RAM）が読めない ECU では、標準の P58（AFR 換算）で判定する
+        val afr = v["E92"] ?: v["P58"]
         val underLoad = throttle != null && boost != null &&
             throttle >= thresholds.wotThrottlePercent && boost >= thresholds.boostedKpa
         // A/F は閉ループから開ループへの切り替え直後に遅れて濃くなるので、2 件続いたときだけ鳴らす
