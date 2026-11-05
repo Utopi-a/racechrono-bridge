@@ -541,8 +541,8 @@ class BridgeRuntime(
                 Ssm2Client(transport).resynchronize()
                 session.configure(SSM2_COMMANDS)
                 val probe = Ssm2LinkProbe(transport, session, clock = SystemClock::elapsedRealtime, onLog = ::appendLog)
-                val reports = probe.run(linkProbeTargets())
-                updateState { copy(linkTest = StepStatus(StepState.OK, reports.joinToString("\n") { it.summary() })) }
+                val result = probe.run(linkProbeTargets())
+                updateState { copy(linkTest = StepStatus(StepState.OK, result.summary())) }
             } catch (error: Exception) {
                 updateState { copy(linkTest = StepStatus(StepState.FAILED, "失敗: ${error.message}")) }
                 appendLog("Link test failed: ${error.message}")
@@ -556,7 +556,7 @@ class BridgeRuntime(
 
     /**
      * 標準は冷却水温 P2（どの ECU も対応している）。RAM は燃料プリセット A の拡張パラメータをまとめたブロックで、
-     * 2026-10 の実車で拒否されたのと同じ読み方になる。
+     * 2026-10 の実車で拒否されたのと同じ読み方になる。まとめ読みは水温・回転数（2 バイト）・車速の 4 アドレス。
      */
     private fun linkProbeTargets(): Ssm2LinkProbeTargets {
         val parameters = catalog.forEcu(DEFAULT_ECU_ID)
@@ -568,6 +568,7 @@ class BridgeRuntime(
             standardAddress = parameters.getValue("P2").byteAddresses.first(),
             ramAddress = block.start,
             ramBlock = block,
+            batchAddresses = listOf("P2", "P8", "P9").flatMap { parameters.getValue(it).byteAddresses },
         )
     }
 

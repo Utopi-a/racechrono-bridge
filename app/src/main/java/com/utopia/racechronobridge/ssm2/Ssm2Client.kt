@@ -47,6 +47,20 @@ class Ssm2Client(
         return data.first()
     }
 
+    /**
+     * 複数のアドレスを 1 回の A8 で読む（RomRaider と同じ頼み方）。
+     * [viaStpx] なら STN 系のアダプターの STPX で送る。ELM327 の 7 バイトの上限が無く、CAN では複数フレームに分けて送られる。
+     * そうでなければ ELM327 にそのまま送るので、K-line で ATAL のとき 8 バイト（2 アドレス）までしか送れない。
+     */
+    fun readAddresses(addresses: List<Int>, viaStpx: Boolean): List<Int> {
+        require(addresses.isNotEmpty() && addresses.all { it in 0..0xFFFFFF }) { "invalid addresses: $addresses" }
+        val data = "A800" + addresses.joinToString("") { hex(it, 6) }
+        val command = if (viaStpx) "STPX d:$data, r:1" else data
+        val bytes = request(command = command, marker = ElmResponseParser.SSM2_ADDRESS_READ_MARKER)
+        if (bytes.size != addresses.size) throw Ssm2RequestFailed("$command returned ${bytes.size} bytes")
+        return bytes
+    }
+
     fun readBlock(start: Int, count: Int): List<Int> {
         require(start in 0..0xFFFFFF && count in 1..MAX_BLOCK_BYTES && start + count - 1 <= 0xFFFFFF) {
             "invalid block start=$start count=$count"
