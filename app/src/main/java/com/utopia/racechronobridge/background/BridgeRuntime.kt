@@ -37,6 +37,10 @@ import com.utopia.racechronobridge.ssm2.CustomTelemetryChannel
 import com.utopia.racechronobridge.ssm2.FakeSubaruTelemetrySource
 import com.utopia.racechronobridge.ssm2.Ssm2Client
 import com.utopia.racechronobridge.ssm2.Ssm2Identification
+import com.utopia.racechronobridge.ssm2.Ssm2LinkProbe
+import com.utopia.racechronobridge.ssm2.Ssm2LinkProbeTargets
+import com.utopia.racechronobridge.ssm2.Ssm2Read
+import com.utopia.racechronobridge.ssm2.Ssm2ReadPlanner
 import com.utopia.racechronobridge.ssm2.Ssm2RequestRejected
 import com.utopia.racechronobridge.ssm2.Ssm2Reader
 import com.utopia.racechronobridge.ssm2.SubaruTelemetry
@@ -88,6 +92,8 @@ data class BridgeRuntimeState(
     val loggerValues: List<LoggerValue> = emptyList(),
     val loggerAlarmsEnabled: Boolean = true,
     val loggerLastAlarm: StepStatus = StepStatus(StepState.IDLE, "なし"),
+    /** CAN と K-line で何が読めるかを調べた結果（[BridgeRuntime.runLinkTest]）。 */
+    val linkTest: StepStatus = StepStatus(StepState.IDLE, "未実施"),
 )
 
 class BridgeRuntime(
@@ -299,6 +305,10 @@ class BridgeRuntime(
             appendLog("Stop logging before starting CAN capture.")
             return
         }
+        if (isLinkTesting()) {
+            appendLog("Wait for the link test to finish before starting CAN capture.")
+            return
+        }
 
         // ATMA and SSM2 polling share one adapter, so polling pauses during capture.
         stopTelemetry()
@@ -386,6 +396,10 @@ class BridgeRuntime(
         }
         if (canCaptureSession != null) {
             appendLog("Stop CAN capture before logging.")
+            return
+        }
+        if (isLinkTesting()) {
+            appendLog("Wait for the link test to finish before logging.")
             return
         }
         val preset = LogPresets.byKey(state.loggerPresetKey) ?: LogPresets.FUEL
@@ -517,6 +531,65 @@ class BridgeRuntime(
     private class LoggingCancelled : Exception("cancelled")
 
     private fun isLogging(): Boolean = loggerSession != null || loggerStop != null || state.logger.state == StepState.WORKING
+
+    private fun isLinkTesting(): Boolean = state.linkTest.state == StepState.WORKING
+
+    /**
+     * CAN と K-line のそれぞれで、ECU 識別・標準パラメータ・RAM が読めるかと往復時間を調べる（[Ssm2LinkProbe]）。
+     * 結果は [BridgeRuntimeState.linkTest] とログに出す。調べている間は通常の取得を止め、終わったら ELM327 を初期化し直して戻す。
+     */
+    fun runLinkTest() {
+        val transport = elmTransport
+        val session = elmSession
+        if (transport == null || session == null) {
+            appendLog("Connect the adapter and initialize ELM327 before the link test.")
+            return
+        }
+        if (isLogging() || canCaptureSession != null || isLinkTesting()) {
+            appendLog("Stop logging and CAN capture before the link test.")
+            return
+        }
+        stopTelemetry()
+        updateState {
+            copy(
+                linkTest = StepStatus(StepState.WORKING, "調べています"),
+                ecu = StepStatus(StepState.IDLE, "通信経路を調べる間は通常の取得を止めています"),
+            )
+        }
+        pollExecutor.execute {
+            try {
+                Ssm2Client(transport).resynchronize()
+                session.configure(SSM2_COMMANDS)
+                val probe = Ssm2LinkProbe(transport, session, clock = SystemClock::elapsedRealtime, onLog = ::appendLog)
+                val reports = probe.run(linkProbeTargets())
+                updateState { copy(linkTest = StepStatus(StepState.OK, reports.joinToString("\n") { it.summary() })) }
+            } catch (error: Exception) {
+                updateState { copy(linkTest = StepStatus(StepState.FAILED, "失敗: ${error.message}")) }
+                appendLog("Link test failed: ${error.message}")
+            }
+            if (elmTransport === transport) {
+                appendLog("Restoring telemetry after the link test.")
+                initializeElm327(startPollingOnSuccess = true)
+            }
+        }
+    }
+
+    /**
+     * 標準は冷却水温 P2（どの ECU も対応している）。RAM は燃料プリセット A の拡張パラメータをまとめたブロックで、
+     * 2026-10 の実車で拒否されたのと同じ読み方になる。
+     */
+    private fun linkProbeTargets(): Ssm2LinkProbeTargets {
+        val parameters = catalog.forEcu(DEFAULT_ECU_ID)
+        val ram = LogPresets.FUEL.parameters
+            .mapNotNull { parameters[it.id]?.takeIf { p -> p.kind == SsmParameterKind.EXTENDED } }
+            .flatMap { it.byteAddresses }
+        val block = Ssm2ReadPlanner.plan(ram).filterIsInstance<Ssm2Read.Block>().first()
+        return Ssm2LinkProbeTargets(
+            standardAddress = parameters.getValue("P2").byteAddresses.first(),
+            ramAddress = block.start,
+            ramBlock = block,
+        )
+    }
 
     fun markCanCapture(label: String) {
         val writer = canCaptureWriter

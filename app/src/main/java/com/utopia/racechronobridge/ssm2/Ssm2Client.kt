@@ -10,9 +10,9 @@ open class Ssm2RequestFailed(message: String) : Exception(message)
 /** ECU が要求を拒否した（応答コード 7F）。その ECU はこの読み方に対応していない。 */
 class Ssm2RequestRejected(message: String) : Ssm2RequestFailed(message)
 
-/** ECU 識別（CAN では `AA` → `EA`）の結果。 */
+/** ECU 識別（CAN では `AA` → `EA`、K-line では `BF` → `FF`）の結果。 */
 data class Ssm2Identification(
-    /** `EA` の後ろ全体: システム ID 3 バイト + ROM ID 5 バイト + 対応フラグ。 */
+    /** 応答コードの後ろ全体: システム ID 3 バイト + ROM ID 5 バイト + 対応フラグ。 */
     val bytes: List<Int>,
 ) {
     /** RomRaider の ECU ID（ROM ID の 5 バイトを 16 進で）。例: `5104584007`。 */
@@ -20,9 +20,9 @@ data class Ssm2Identification(
 }
 
 /**
- * SSM2 over CAN の要求を ELM327 で送る。
+ * SSM2 の要求を ELM327 で送る。ELM327 はあらかじめ [link] の経路に設定しておく。
  *
- * ELM327 は 1 回の送信をデータ 7 バイトまでの単一フレームに限るため、
+ * ELM327 は 1 回の送信をデータ 7 バイトまでに限るため（CAN は単一フレーム、K-line も同じ上限）、
  * A8 は 1 アドレスずつ（5 バイト）、A0 はブロック 1 つ（6 バイト）で送る。
  * 応答は複数フレームでも ELM327 が組み立てて返す。
  * 書式は FreeSSM の SSMP2communication_core（ReadDataBlock / ReadMultipleDatabytes / GetCUdata）に合わせた。
@@ -30,9 +30,10 @@ data class Ssm2Identification(
 class Ssm2Client(
     private val transport: Elm327Transport,
     private val parser: ElmResponseParser = ElmResponseParser(),
+    val link: Ssm2Link = Ssm2Link.CAN,
 ) {
     fun identify(): Ssm2Identification {
-        val data = request(command = "AA", marker = ElmResponseParser.SSM2_IDENTIFY_MARKER, timeoutMillis = 4_000)
+        val data = request(command = link.identifyCommand, marker = link.identifyMarker, timeoutMillis = 4_000)
         if (data.size < 8) throw Ssm2RequestFailed("identification response too short: ${data.size} bytes")
         return Ssm2Identification(data)
     }
@@ -89,7 +90,7 @@ class Ssm2Client(
     }
 
     companion object {
-        /** ISO15765 の要求の長さバイトの上限（FreeSSM と同じ）。 */
+        /** 要求のバイト数の上限（count − 1 を 1 バイトで送る。FreeSSM と同じ）。 */
         const val MAX_BLOCK_BYTES = 256
         private const val RESYNC_ATTEMPTS = 3
         private const val DRAIN_QUIET_MILLIS = 150L

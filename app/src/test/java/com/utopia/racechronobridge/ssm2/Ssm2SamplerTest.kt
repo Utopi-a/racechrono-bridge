@@ -20,14 +20,40 @@ class ScriptedElmTransport(private val respond: (String) -> String) : Elm327Tran
     override fun close() = Unit
 }
 
-/** ECU の RAM を模した応答を作る。A8 は 1 バイト、A0 は複数フレームで返す。 */
+/**
+ * ECU の RAM を模した応答を作る。CAN では A8 は 1 バイト、A0 は複数フレームで返す。
+ * ATSP5 で K-line、ATZ・ATSP6 で CAN に切り替わる（ELM327 の設定に合わせて経路が変わる）。
+ */
 class FakeEcu(
     private val memory: Map<Int, Int>,
     private val acceptBlockReads: Boolean = true,
-    /** false なら RAM（0xFF0000 以上）の読み出しを拒否する。2026-10 に実車（GH8・iCar Pro 2S・CAN）で見えた応答と同じ `7F A8 12`。 */
+    /**
+     * false なら CAN での RAM（0xFF0000 以上）の読み出しを拒否する。2026-10 に実車（GH8・iCar Pro 2S・CAN）で見えた応答と同じ `7F A8 12`。
+     * K-line では受け付ける（同じ車で RomRaider が既定の K-line で拡張パラメータを読めていた）。
+     */
     private val acceptRamReads: Boolean = true,
+    /** false なら K-line で応答しない（K-line の線が無い車・アダプターなど）。 */
+    private val answersKLine: Boolean = true,
+    /** アダプターが受け付けない AT コマンド（ATIB48 の無い互換品など）。 */
+    private val unsupportedAtCommands: Set<String> = emptySet(),
 ) {
-    fun respond(command: String): String = when {
+    var link = Ssm2Link.CAN
+        private set
+
+    fun respond(command: String): String {
+        when (command) {
+            "ATSP5" -> link = Ssm2Link.KLINE
+            "ATZ", "ATSP6" -> link = Ssm2Link.CAN
+        }
+        return when {
+            command in unsupportedAtCommands -> "?\r>"
+            command.startsWith("AT") -> "OK\r>"
+            link == Ssm2Link.KLINE -> respondKLine(command)
+            else -> respondCan(command)
+        }
+    }
+
+    private fun respondCan(command: String): String = when {
         command.startsWith("A800") && !acceptRamReads && command.substring(4).toInt(16) >= 0xFF0000 -> "7F A8 12\r>"
         command.startsWith("A000") && !acceptRamReads && command.substring(4, 10).toInt(16) >= 0xFF0000 -> "7F A0 12\r>"
         command.startsWith("A800") -> {
@@ -35,14 +61,27 @@ class FakeEcu(
             "02 E8 %02X\r>".format(memory[address] ?: 0)
         }
         command.startsWith("A000") && !acceptBlockReads -> "03 7F A0 12\r>"
-        command.startsWith("A000") -> {
-            val start = command.substring(4, 10).toInt(16)
-            val count = command.substring(10, 12).toInt(16) + 1
-            multiFrame(listOf(0xE0) + (start until start + count).map { memory[it] ?: 0 })
-        }
-        command == "AA" -> multiFrame(listOf(0xEA, 0x00, 0x00, 0x00, 0x51, 0x04, 0x58, 0x40, 0x07) + List(48) { 0xFF })
-        command.startsWith("AT") -> "OK\r>"
+        command.startsWith("A000") -> multiFrame(listOf(0xE0) + blockBytes(command))
+        command == "AA" -> multiFrame(listOf(0xEA) + IDENTIFICATION)
         else -> "?\r>"
+    }
+
+    /** K-line（ATH0）: ELM327 がヘッダー・長さ・チェックサムを外して 1 行で返す。 */
+    private fun respondKLine(command: String): String {
+        val payload = when {
+            !answersKLine -> return "NO DATA\r>"
+            command.startsWith("A800") -> listOf(0xE8, memory[command.substring(4).toInt(16)] ?: 0)
+            command.startsWith("A000") -> listOf(0xE0) + blockBytes(command)
+            command == "BF" -> listOf(0xFF) + IDENTIFICATION
+            else -> return "NO DATA\r>"
+        }
+        return payload.joinToString(" ") { "%02X".format(it) } + "\r>"
+    }
+
+    private fun blockBytes(command: String): List<Int> {
+        val start = command.substring(4, 10).toInt(16)
+        val count = command.substring(10, 12).toInt(16) + 1
+        return (start until start + count).map { memory[it] ?: 0 }
     }
 
     /** ELM327（ATCAF1・ATS0）の複数フレーム表示。最初の行は 6 バイト、以降は 7 バイトずつ。 */
@@ -55,6 +94,11 @@ class FakeEcu(
             lines += "%X:".format(i % 16) + chunk.joinToString("") { "%02X".format(it) } + "AA".repeat(width - chunk.size)
         }
         return lines.joinToString("\r") + "\r\r>"
+    }
+
+    private companion object {
+        /** システム ID 3 バイト + ROM ID 5 バイト（ECU ID 5104584007）+ 対応フラグ。 */
+        val IDENTIFICATION = listOf(0x00, 0x00, 0x00, 0x51, 0x04, 0x58, 0x40, 0x07) + List(48) { 0xFF }
     }
 }
 
@@ -120,6 +164,23 @@ class Ssm2ClientTest {
         val bytes = Ssm2Client(ScriptedElmTransport(FakeEcu(memory)::respond)).readBlock(0xFF7000, 224)
         assertEquals(0x7F, bytes.first())
         assertEquals(224, bytes.size)
+    }
+
+    @Test
+    fun kLineIdentifiesWithBfAndReadsWithTheSameCommandsAsCan() {
+        val ecu = FakeEcu(memory).apply { respond("ATSP5") }
+        val transport = ScriptedElmTransport(ecu::respond)
+        val client = Ssm2Client(transport, link = Ssm2Link.KLINE)
+        assertEquals("5104584007", client.identify().ecuId)
+        assertEquals(0x2E, client.readAddress(0x0E))
+        assertEquals((0x8C..0xCB).toList(), client.readBlock(0xFF708C, 64))
+        assertEquals(listOf("BF", "A80000000E", "A000FF708C3F"), transport.sent)
+    }
+
+    @Test
+    fun kLineResponseWithLengthByteIsAlsoAccepted() {
+        // ATH0 で長さバイトが残る ELM327 互換品でも読める
+        assertEquals(0x3D, Ssm2Client(ScriptedElmTransport { "02 E8 3D\r>" }, link = Ssm2Link.KLINE).readAddress(0x08))
     }
 
     @Test

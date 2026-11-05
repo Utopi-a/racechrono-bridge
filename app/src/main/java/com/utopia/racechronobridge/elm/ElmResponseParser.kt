@@ -19,11 +19,12 @@ class ElmResponseParser {
         parseSsm2Response(raw = raw, echoCommand = echoCommand, marker = SSM2_ADDRESS_READ_MARKER, strictMarker = false)
 
     /**
-     * SSM2 の応答から、応答コード [marker]（A8 → E8、A0 → E0、AA → EA）より後ろのデータを取り出す。
+     * SSM2 の応答から、応答コード [marker]（A8 → E8、A0 → E0、AA → EA、BF → FF）より後ろのデータを取り出す。
      *
      * ELM327 の出力は次のどれでも受け付ける:
      * - 単一フレーム: `E8 7F`、先頭に長さバイトが付いた `04 E8 3D`、ヘッダー付きの `7E8 04 E8 7F`
      * - 複数フレーム（ATCAF1）: 1 行目にバイト数（16 進 3 桁）、以降 `0:` `1:` … の行
+     * - K-line（ATH0）: ヘッダー・長さ・チェックサムを除いた `E8 3D`。長い応答も 1 行
      *
      * [strictMarker] が true なら、応答コードは先頭か、先頭 1 バイト（長さ）の直後にしか認めない。
      * データの途中に同じ値があっても応答コードとみなさないためで、遅れて届いた別の要求の応答を取り違えないようにする。
@@ -97,6 +98,9 @@ class ElmResponseParser {
         const val SSM2_ADDRESS_READ_MARKER = 0xE8
         const val SSM2_BLOCK_READ_MARKER = 0xE0
         const val SSM2_IDENTIFY_MARKER = 0xEA
+
+        /** K-line の ECU 識別（`BF`）の応答コード。後ろの並びは CAN の `EA` と同じ（システム ID・ROM ID・対応フラグ）。 */
+        const val SSM2_KLINE_INIT_MARKER = 0xFF
         private const val SSM2_REJECTED = 0x7F
 
         /** CAN の単一フレームのデータは最大 7 バイト。長さバイト付きでも 8 バイトまで。 */

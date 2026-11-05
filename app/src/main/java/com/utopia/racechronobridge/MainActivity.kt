@@ -78,6 +78,7 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
     private lateinit var customChannelInput: EditText
     private lateinit var customChannelsLayout: LinearLayout
     private lateinit var tcpToggleButton: TextView
+    private lateinit var linkTestStep: StepRow
     private lateinit var acquisitionLayout: LinearLayout
     private lateinit var logView: TextView
     private var detailsExpanded = false
@@ -167,6 +168,7 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
             renderLoggerAlarms(state.loggerAlarmsEnabled)
         }
         tcpToggleButton.text = if (state.tcpStatus.running) "TCP サーバーを止める" else "TCP サーバーを開始"
+        linkTestStep.render(state.linkTest)
         if (previous.acquisitionMode != state.acquisitionMode || acquisitionLayout.childCount == 0) {
             renderAcquisitionMode(state.acquisitionMode)
         }
@@ -587,6 +589,17 @@ class MainActivity : Activity(), BridgeRuntime.Listener {
                 secondaryButton("欄の対応をコピー") { copyRaceChronoMapping() } to 1f,
                 secondaryButton("ログをコピー") { copyDebugLog() } to 1f,
             ),
+            fullWidthParams(top = 8),
+        )
+        linkTestStep = stepRow("通信経路")
+        container.addView(card { addView(linkTestStep.view) }, fullWidthParams(top = 12))
+        container.addView(
+            secondaryButton("CAN と K-line で読めるかを調べる") {
+                ensureBridgePermissions {
+                    startBridgeForegroundService()
+                    runtime.runLinkTest()
+                }
+            },
             fullWidthParams(top = 8),
         )
         logView = TextView(this).apply {
