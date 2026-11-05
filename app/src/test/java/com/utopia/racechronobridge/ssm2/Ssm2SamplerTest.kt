@@ -36,29 +36,44 @@ class FakeEcu(
     private val answersKLine: Boolean = true,
     /** アダプターが受け付けない AT コマンド（ATIB48 の無い互換品など）。 */
     private val unsupportedAtCommands: Set<String> = emptySet(),
+    /** true なら STN 系（OBDLink と同じ ST コマンド）のアダプターとして STI・STPX に答える。 */
+    private val stn: Boolean = false,
 ) {
     var link = Ssm2Link.CAN
         private set
+    private var longMessages = false
 
     fun respond(command: String): String {
         when (command) {
             "ATSP5" -> link = Ssm2Link.KLINE
             "ATZ", "ATSP6" -> link = Ssm2Link.CAN
+            "ATAL" -> longMessages = true
         }
+        if (command == "ATZ") longMessages = false
+        val stpx = STPX.matchEntire(command)
         return when {
             command in unsupportedAtCommands -> "?\r>"
+            command == "ATI" -> "ELM327 v2.3\r>"
             command.startsWith("AT") -> "OK\r>"
-            link == Ssm2Link.KLINE -> respondKLine(command)
-            else -> respondCan(command)
+            command == "STI" -> if (stn) "STN2120 v5.10.3\r>" else "?\r>"
+            command.startsWith("ST") && stpx == null -> if (stn) "OK\r>" else "?\r>"
+            stpx != null -> if (stn) respondOnBus(stpx.groupValues[1]) else "?\r>"
+            // ELM327 は 7 バイト（K-line で ATAL のとき 8 バイト）を超える送信を受け付けない
+            command.length / 2 > if (link == Ssm2Link.KLINE && longMessages) 8 else 7 -> "?\r>"
+            else -> respondOnBus(command)
         }
     }
 
+    private fun respondOnBus(data: String): String = if (link == Ssm2Link.KLINE) respondKLine(data) else respondCan(data)
+
+    private fun addresses(command: String): List<Int> = command.substring(4).chunked(6).map { it.toInt(16) }
+
     private fun respondCan(command: String): String = when {
-        command.startsWith("A800") && !acceptRamReads && command.substring(4).toInt(16) >= 0xFF0000 -> "7F A8 12\r>"
+        command.startsWith("A800") && !acceptRamReads && addresses(command).any { it >= 0xFF0000 } -> "7F A8 12\r>"
         command.startsWith("A000") && !acceptRamReads && command.substring(4, 10).toInt(16) >= 0xFF0000 -> "7F A0 12\r>"
         command.startsWith("A800") -> {
-            val address = command.substring(4).toInt(16)
-            "02 E8 %02X\r>".format(memory[address] ?: 0)
+            val values = addresses(command).map { memory[it] ?: 0 }
+            if (values.size == 1) "02 E8 %02X\r>".format(values.single()) else multiFrame(listOf(0xE8) + values)
         }
         command.startsWith("A000") && !acceptBlockReads -> "03 7F A0 12\r>"
         command.startsWith("A000") -> multiFrame(listOf(0xE0) + blockBytes(command))
@@ -70,7 +85,7 @@ class FakeEcu(
     private fun respondKLine(command: String): String {
         val payload = when {
             !answersKLine -> return "NO DATA\r>"
-            command.startsWith("A800") -> listOf(0xE8, memory[command.substring(4).toInt(16)] ?: 0)
+            command.startsWith("A800") -> listOf(0xE8) + addresses(command).map { memory[it] ?: 0 }
             command.startsWith("A000") -> listOf(0xE0) + blockBytes(command)
             command == "BF" -> listOf(0xFF) + IDENTIFICATION
             else -> return "NO DATA\r>"
@@ -97,6 +112,8 @@ class FakeEcu(
     }
 
     private companion object {
+        val STPX = Regex("^STPX d:([0-9A-F]+), r:1$")
+
         /** システム ID 3 バイト + ROM ID 5 バイト（ECU ID 5104584007）+ 対応フラグ。 */
         val IDENTIFICATION = listOf(0x00, 0x00, 0x00, 0x51, 0x04, 0x58, 0x40, 0x07) + List(48) { 0xFF }
     }
@@ -175,6 +192,19 @@ class Ssm2ClientTest {
         assertEquals(0x2E, client.readAddress(0x0E))
         assertEquals((0x8C..0xCB).toList(), client.readBlock(0xFF708C, 64))
         assertEquals(listOf("BF", "A80000000E", "A000FF708C3F"), transport.sent)
+    }
+
+    @Test
+    fun batchedReadSendsAllAddressesInOneRequest() {
+        val transport = ScriptedElmTransport(FakeEcu(memory, stn = true)::respond)
+        assertEquals(listOf(0x2E, 0xE0, 0x8C), Ssm2Client(transport).readAddresses(listOf(0x0E, 0x0F, 0xFF708C), viaStpx = true))
+        assertEquals(listOf("STPX d:A80000000E00000FFF708C, r:1"), transport.sent)
+    }
+
+    @Test
+    fun plainElmCannotSendMoreThanSevenBytes() {
+        val client = Ssm2Client(ScriptedElmTransport(FakeEcu(memory)::respond))
+        assertFailsWith<Ssm2RequestFailed> { client.readAddresses(listOf(0x0E, 0x0F), viaStpx = false) }
     }
 
     @Test
