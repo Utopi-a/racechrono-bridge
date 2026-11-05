@@ -75,6 +75,14 @@ class LogPresetsTest {
     }
 
     @Test
+    fun onlyValuesThatStandardParametersCannotGiveCallForRamAccess() {
+        // シフト用は MAP を P7 で同じ値が取れるので CAN のまま。サーキット用は FBKC が P23（近い値）でしか代われない
+        assertEquals(emptyList(), LogLayout.lostWithoutRam(LogPresets.SHIFT, GH8))
+        assertEquals(listOf("E94"), LogLayout.lostWithoutRam(LogPresets.CIRCUIT, GH8))
+        assertEquals(listOf("E87", "E124", "E92"), LogLayout.lostWithoutRam(LogPresets.FUEL, GH8))
+    }
+
+    @Test
     fun unknownUnitsAreRejected() {
         val preset = LogPreset("X", "x", "x", listOf(LogParameterRef("P8", units = "furlongs")))
         assertFailsWith<IllegalArgumentException> { LogLayout.resolve(preset, GH8) }

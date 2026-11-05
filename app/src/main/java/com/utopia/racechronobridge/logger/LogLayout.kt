@@ -135,5 +135,16 @@ class LogLayout private constructor(
             val derived = DerivedColumn.entries.filter { d -> d.inputs.all { group -> group.any { it in defaultUnits } } }
             return LogLayout(preset, columns, derived, missing, substituted)
         }
+
+        /**
+         * RAM が読めない経路では同じ値を記録できない拡張パラメータ。代わりの標準パラメータが無いものと、
+         * 代わりが近い値でしかないもの（[LogParameterRef.approximate]）。空なら標準パラメータだけで足りる。
+         */
+        fun lostWithoutRam(preset: LogPreset, parameters: Map<String, SsmParameter>): List<String> =
+            preset.parameters.filter { ref ->
+                val fallback = ref.fallback
+                parameters[ref.id]?.kind == SsmParameterKind.EXTENDED &&
+                    (fallback == null || fallback.approximate || fallback.id !in parameters)
+            }.map { it.id }
     }
 }

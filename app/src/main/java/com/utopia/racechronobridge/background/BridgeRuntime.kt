@@ -24,6 +24,7 @@ import com.utopia.racechronobridge.logger.LogLayout
 import com.utopia.racechronobridge.logger.LogPreset
 import com.utopia.racechronobridge.logger.LogPresets
 import com.utopia.racechronobridge.logger.LogRecord
+import com.utopia.racechronobridge.logger.LoggerLinkSelector
 import com.utopia.racechronobridge.logger.LoggerSession
 import com.utopia.racechronobridge.logger.LoggerStats
 import com.utopia.racechronobridge.logger.RomRaiderCsvWriter
@@ -37,16 +38,15 @@ import com.utopia.racechronobridge.ssm2.CustomTelemetryChannel
 import com.utopia.racechronobridge.ssm2.FakeSubaruTelemetrySource
 import com.utopia.racechronobridge.ssm2.Ssm2Client
 import com.utopia.racechronobridge.ssm2.Ssm2Identification
+import com.utopia.racechronobridge.ssm2.Ssm2Link
 import com.utopia.racechronobridge.ssm2.Ssm2LinkProbe
 import com.utopia.racechronobridge.ssm2.Ssm2LinkProbeTargets
 import com.utopia.racechronobridge.ssm2.Ssm2Read
 import com.utopia.racechronobridge.ssm2.Ssm2ReadPlanner
-import com.utopia.racechronobridge.ssm2.Ssm2RequestRejected
 import com.utopia.racechronobridge.ssm2.Ssm2Reader
 import com.utopia.racechronobridge.ssm2.SubaruTelemetry
 import com.utopia.racechronobridge.ssm2.TelemetryChannel
 import com.utopia.racechronobridge.ssm2.catalog.SsmCatalog
-import com.utopia.racechronobridge.ssm2.catalog.SsmParameter
 import com.utopia.racechronobridge.ssm2.catalog.SsmParameterKind
 import java.io.File
 import java.time.LocalDateTime
@@ -437,11 +437,12 @@ class BridgeRuntime(
                     available.values.filter { p -> p.capability?.isSupportedBy(id.bytes) == false }.map { it.id }.toSet()
                 }.orEmpty()
                 val readable = available - unsupported
-                val ramReadable = probeRamReadable(client, preset, readable)
+                val (logClient, ramReadable) = LoggerLinkSelector(transport, session, onLog = ::appendLog).select(preset, readable)
                 if (stop.get()) throw LoggingCancelled()
+                val link = logClient.link
                 val layout = LogLayout.resolve(preset, readable, ramReadable)
                 if (!ramReadable) {
-                    appendLog("ECU rejects RAM reads over this link; extended parameters replaced: " +
+                    appendLog("ECU rejects RAM reads; extended parameters replaced: " +
                         layout.substituted.entries.joinToString { "${it.key}->${it.value}" })
                 }
                 val notSupported = layout.missing.filter { it in unsupported }
@@ -453,20 +454,20 @@ class BridgeRuntime(
                 val file = newLoggerFile(preset, romTag, ecuVerified = identification != null)
                 writer = RomRaiderCsvWriter(file.bufferedWriter(), layout)
                 val logger = LoggerSession(
-                    client = client,
+                    client = logClient,
                     layout = layout,
                     writer = writer,
                     clock = SystemClock::elapsedRealtime,
                     // 鳴らすかどうかに関係なく判定して CSV に残す（後から見返せるように）
                     alarms = AlarmMonitor(),
                     onRecord = { record, stats, alarms ->
-                        onLoggerRecord(layout, record, stats, alarms, ecuVerified = identification != null, ramReadable = ramReadable)
+                        onLoggerRecord(layout, record, stats, alarms, ecuVerified = identification != null, ramReadable = ramReadable, link = link)
                     },
                     onLog = ::appendLog,
                 )
                 loggerSession = logger
                 if (stop.get()) logger.requestStop()
-                appendLog("Logging ECU $ecuId${if (identification == null) " (unverified)" else ""} preset ${preset.key} to ${file.absolutePath}")
+                appendLog("Logging ECU $ecuId${if (identification == null) " (unverified)" else ""} preset ${preset.key} over ${link.label} to ${file.absolutePath}")
                 updateState { copy(logger = StepStatus(StepState.WORKING, "記録中"), loggerFile = file) }
                 logger.run()
                 updateState { copy(logger = StepStatus(StepState.OK, "保存済み ${file.name}")) }
@@ -485,27 +486,6 @@ class BridgeRuntime(
                 appendLog("Restoring telemetry after logging.")
                 initializeElm327(startPollingOnSuccess = true)
             }
-        }
-    }
-
-    /**
-     * ECU がこの通信経路で RAM（拡張パラメータ）の読み出しを受け付けるかを、プリセットの拡張パラメータを 1 バイト読んで確かめる。
-     * 拒否（7F）されたときだけ false。それ以外の失敗は判断材料にならないので、通信を立て直して true とみなす
-     * （読めなければ記録中にその列だけ外れる）。
-     */
-    private fun probeRamReadable(client: Ssm2Client, preset: LogPreset, parameters: Map<String, SsmParameter>): Boolean {
-        val probe = preset.parameters.firstNotNullOfOrNull { ref -> parameters[ref.id]?.takeIf { it.kind == SsmParameterKind.EXTENDED } }
-            ?: return true
-        return try {
-            client.readAddress(probe.byteAddresses.first())
-            true
-        } catch (rejected: Ssm2RequestRejected) {
-            appendLog("RAM read probe ${probe.id} rejected: ${rejected.message}")
-            false
-        } catch (error: Exception) {
-            appendLog("RAM read probe ${probe.id} failed: ${error.message}")
-            runCatching { client.resynchronize() }
-            true
         }
     }
 
@@ -815,6 +795,7 @@ class BridgeRuntime(
         alarms: List<AlarmEvent>,
         ecuVerified: Boolean,
         ramReadable: Boolean,
+        link: Ssm2Link,
     ) {
         publishTelemetry(lastTelemetry.updatedWith(record, System.currentTimeMillis()))
         alarms.forEach { alarm ->
@@ -828,6 +809,7 @@ class BridgeRuntime(
         val detail = "記録中  ${"%,d".format(stats.samples)} 件 / ${"%.1f".format(stats.samplesPerSecond)} 回/秒 / " +
             "要求 ${stats.requestsPerSample} 回" + (if (stats.failures > 0) " / 失敗 ${stats.failures}" else "") +
             (if (stats.degraded) " / ブロック読み出し停止中" else "") + (if (!ecuVerified) " / ECU 未確認" else "") +
+            (if (link == Ssm2Link.KLINE) " / K-line" else "") +
             (if (!ramReadable) " / 拡張パラメータ不可（標準で代用）" else "")
         updateState { copy(logger = StepStatus(StepState.WORKING, detail), loggerValues = values) }
     }
