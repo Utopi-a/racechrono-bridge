@@ -4,12 +4,14 @@ package com.utopia.racechronobridge.logger
  * 記録する SSM パラメータ。[units] を指定すると RomRaider の既定以外の換算で記録する。
  * [slow] は温度など変化の遅い項目で、[LoggerSession.SLOW_EVERY] 回に 1 回だけ読む。
  * [fallback] は、ECU が RAM（拡張パラメータ）の読み出しを受け付けないときに代わりに読む標準パラメータ。
+ * [approximate] は、[fallback] として読むときに元と同じ値ではなく近い値であること（記録経路の選び方に使う）。
  */
 data class LogParameterRef(
     val id: String,
     val units: String? = null,
     val slow: Boolean = false,
     val fallback: LogParameterRef? = null,
+    val approximate: Boolean = false,
 )
 
 data class LogPreset(
@@ -44,7 +46,7 @@ object LogPresets {
     private val timing = LogParameterRef("P10")
 
     /** FBKC は標準パラメータに無い。読めないときは、点火時期（P10）とノック補正の合計（P23）で代わりに見る。 */
-    private val fbkc = LogParameterRef("E94", fallback = LogParameterRef("P23"))
+    private val fbkc = LogParameterRef("E94", fallback = LogParameterRef("P23", approximate = true))
     private val flkc = LogParameterRef("E95", fallback = LogParameterRef("P91"))
     private val iam = LogParameterRef("E96", fallback = LogParameterRef("P90"))
 
